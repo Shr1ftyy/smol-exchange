@@ -1,0 +1,8 @@
+FROM redis/redis-stack-server:7.0.6-RC2
+
+COPY ./redis/entrypoint.sh /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["bash"]
+CMD ["/entrypoint.sh"]

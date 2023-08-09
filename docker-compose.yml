@@ -1,0 +1,14 @@
+services:
+  redis:
+    build:
+      dockerfile: ./dockerfiles/Dockerfile_redis
+      context: .
+    ports:
+      - "6379:6379"
+    volumes:
+      - type: bind
+        source: ./redis/data
+        target: /data
+      - type: bind
+        source: ./redis/redis-stack.conf
+        target: /redis-stack.conf
