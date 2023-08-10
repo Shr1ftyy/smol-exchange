@@ -19,8 +19,6 @@ mod tests {
         let mut stocks: Vec<Stock> = Vec::new();
         let mut orders: Vec<Order> = Vec::new();
 
-
-
         for i in 0..10 {
             let stock: Stock = Stock::new(
                 uuid::Uuid::new_v4(),

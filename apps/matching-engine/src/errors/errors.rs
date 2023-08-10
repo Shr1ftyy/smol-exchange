@@ -28,7 +28,7 @@ impl fmt::Display for OrderError {
 }
 
 #[derive(Debug)]
-pub enum StockError{
+pub enum StockError {
     InvalidStockID,
     InvalidName,
     InvalidTicker,
