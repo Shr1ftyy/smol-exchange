@@ -7,7 +7,7 @@ services:
       - "6379:6379"
     volumes:
       - type: bind
-        source: ./redis/data
+        source: ./redis/.
         target: /data
       - type: bind
         source: ./redis/redis-stack.conf

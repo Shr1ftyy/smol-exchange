@@ -10,7 +10,7 @@ if [ -f /redis-stack.conf ]; then
 fi
 
 if [ -z "${REDIS_DATA_DIR}" ]; then
-    REDIS_DATA_DIR=/data
+    REDIS_DATA_DIR=.
 fi
 
 # daemonize redis to set up indices
