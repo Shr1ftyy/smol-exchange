@@ -10,19 +10,25 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  format:
+#   format:
+#     runs-on: ubuntu-latest
+#     defaults:
+#       run:
+#         working-directory: apps/matching-engine
+#     steps:
+#       - uses: actions/checkout@v3
+#       - uses: dtolnay/rust-toolchain@stable
+#       - uses: mbrobbel/rustfmt-check@master
+#         with:
+#           token: ${{ secrets.GITHUB_TOKEN }}
+  docker:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/matching-engine
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: mbrobbel/rustfmt-check@master
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+    - uses: KengoTODA/actions-setup-docker-compose@main
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
   build:
-
     runs-on: ubuntu-latest
     defaults:
       run:
