@@ -36,7 +36,7 @@ jobs:
     steps:
     - name: Set up Redis Instance with Docker
       working-directory: ${{ github.workspace }}
-      run: docker-compose -f "docker-compose.yml" up
+      run: docker-compose -f "docker-compose.yml" up -d --build
     - name: Build
       run: cargo build --verbose
     - name: Run tests
