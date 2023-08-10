@@ -2,7 +2,34 @@
 a smol exchange
 ![diagram](assets/diagram.png)
 
-Overview:
+## TODO
+- [x] Redis
+- [x] Docker
+- [x] Orderbook
+- [ ] Matching Engine
+- [ ] Tests
+- [ ] CI/CD
+- [ ] API
+    - [ ] Websocket
+    - [ ] REST API
+- [ ] Demo Frontend
+- [ ] Documentation
+
+## Getting Started
+
+### Prerequisites
+- [Docker](https://docs.docker.com/get-docker/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
+- [Rust](https://www.rust-lang.org/tools/install)
+
+### Running the Matchine Engine
+1. Clone the repository
+2. `cd apps/matching-engine`
+3. Run `docker compose up`
+4. Run `cargo test --verbose -- --nocapture`
+
+
+Directory Structure: 
 ```
 ├── apps
 │   └── matching-engine
