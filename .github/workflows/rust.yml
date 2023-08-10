@@ -12,25 +12,24 @@ env:
 jobs:
   format:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/matching-engine
     steps:
       - uses: actions/checkout@v3
-        # this is temporary, will fix later
-        working-directory: apps/matching-engine
       - uses: dtolnay/rust-toolchain@stable
-        working-directory: apps/matching-engine
       - uses: mbrobbel/rustfmt-check@master
-        working-directory: apps/matching-engine
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
   build:
 
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: apps/matching-engine
     steps:
     - uses: actions/checkout@v3
     - name: Build
-      working-directory: apps/matching-engine
       run: cargo build --verbose
     - name: Run tests
-      working-directory: apps/matching-engine
       run: cargo test --verbose
