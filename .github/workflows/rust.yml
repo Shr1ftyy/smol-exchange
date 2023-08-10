@@ -32,9 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: "./apps/matching-engine"
+        working-directory: ${{ github.workspace }}/apps/matching-engine
     steps:
     - name: Set up Redis Instance with Docker
+      working-directory: ${{ github.workspace }}
       run: docker compose up
     - name: Build
       run: cargo build --verbose
