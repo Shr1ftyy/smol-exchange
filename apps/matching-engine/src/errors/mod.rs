@@ -1,3 +1,3 @@
 mod errors;
 pub use errors::OrderError;
-pub use errors::PriceLevelError;
+pub use errors::StockError;
