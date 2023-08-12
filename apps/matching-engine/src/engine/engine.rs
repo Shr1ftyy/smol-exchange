@@ -12,8 +12,7 @@ pub trait Matching {
     fn modify_order(
         &mut self,
         order_id: uuid::Uuid,
-        price: f32,
-        qty: i32,
+        order: orderbook::Order
     ) -> Result<(), errors::OrderError>;
     fn cancel_order(&mut self, order_id: uuid::Uuid) -> Result<(), errors::OrderError>;
 }
@@ -88,7 +87,7 @@ impl Matching for MatchingEngine {
     //     let mut conn = self.client.get_connection().unwrap();
 
     //     let orders_to_search = match order.order_side {
-    //         orderbook::OrderSide::BUY => {
+    //         orderbook::OrderSide::BID => {
     //             // get bids
     //             redis::cmd("ZRANGEBYSCORE")
     //                 .arg(format!("orderbook:{}:BIDS", order.stock.ticker))
@@ -96,7 +95,7 @@ impl Matching for MatchingEngine {
     //                 .arg(order.price)
     //                 .query::<Vec<String>>(&mut self.conn)
     //         }
-    //         orderbook::OrderSide::SELL => {
+    //         orderbook::OrderSide::ASK => {
     //             // get asks
     //             redis::cmd("ZRANGEBYSCORE")
     //                 .arg(format!("orderbook:{}:ASKS", order.stock.ticker))
@@ -118,7 +117,7 @@ impl Matching for MatchingEngine {
     //                 match order_to_match {
     //                     Ok(order_to_match) => {
     //                         // if order is a buy
-    //                         if order.order_side == orderbook::OrderSide::BUY {
+    //                         if order.order_side == orderbook::OrderSide::BID {
     //                             // if order is a market order
     //                             if order.order_type == orderbook::OrderType::MARKET {
     //                                 // if order qty is greater than or equal to the current order qty
@@ -137,7 +136,7 @@ impl Matching for MatchingEngine {
     //                             }
     //                         }
     //                         // if order is a sell
-    //                         else if order.order_side == orderbook::OrderSide::SELL {
+    //                         else if order.order_side == orderbook::OrderSide::ASK {
     //                             // if order is a market order
     //                             if order.order_type == orderbook::OrderType::MARKET {
     //                                 // if order qty is greater than or equal to the current order qty
@@ -190,7 +189,7 @@ impl Matching for MatchingEngine {
                 let stock: Stock = serde_json::from_str(&stock).unwrap();
                 // perform operations based on whether the order is a buy/sell or market/limit
                 match order.order_side {
-                    orderbook::OrderSide::BUY => {
+                    orderbook::OrderSide::BID => {
                         match order.order_type {
                             orderbook::OrderType::MARKET => {
                                 // add order to redis
@@ -236,7 +235,7 @@ impl Matching for MatchingEngine {
                             }
                         }
                     }
-                    orderbook::OrderSide::SELL => {
+                    orderbook::OrderSide::ASK => {
                         match order.order_type {
                             orderbook::OrderType::MARKET => {
                                 // add order to redis
@@ -290,41 +289,39 @@ impl Matching for MatchingEngine {
     fn modify_order(
         &mut self,
         order_id: uuid::Uuid,
-        price: f32,
-        qty: i32,
+        order: orderbook::Order,
     ) -> Result<(), errors::OrderError> {
-        let mut conn = self.client.get_connection().unwrap();
         let order_id: String = order_id.to_string();
         let order_id_str = order_id.as_str();
 
-        let order: Result<orderbook::Order, errors::OrderError> =
-            self.get_order(order_id.parse().unwrap());
+        let order: Result<String, redis::RedisError> = redis::cmd("HGET")
+            .arg("orders")
+            .arg(order_id_str)
+            .query::<String>(&mut self.conn);
 
         match order {
             Ok(order) => {
-                let mut order: orderbook::Order = order;
+                let order: orderbook::Order = serde_json::from_str(&order).unwrap();
                 let ticker: String = order.stock.ticker.to_string();
                 let order_id: String = order.order_id.to_string();
                 let order_id_str = order_id.as_str();
-                order.price = price;
-                order.qty = qty;
-                let order_string: String = serde_json::to_string(&order).unwrap();
-                let order_str = order_string.as_str();
                 redis::pipe()
-                    .cmd("HSET")
+                    .cmd("HDEL")
                     .arg("orders")
                     .arg(order_id_str)
-                    .arg(order_str)
-                    .cmd("SADD")
+                    .cmd("SREM")
                     .arg("order_ids")
                     .arg(order_id_str)
-                    .cmd("ZADD")
-                    .arg(format!("orderbook:{}", ticker))
+                    .cmd("ZREM")
+                    .arg(format!("orderbook:{}:BIDS", ticker))
                     .arg(order.price)
                     .arg(order_id_str)
-                    .query::<()>(&mut self.conn)
-                    .unwrap();
-                Ok(())
+                    .cmd("ZREM")
+                    .arg(format!("orderbook:{}:ASKS", ticker))
+                    .arg(order.price)
+                    .arg(order_id_str)
+                    .query::<()>(&mut self.conn);
+                self.add_order(order)
             }
             Err(e) => Err(errors::OrderError::Other(e.to_string())),
         }

@@ -9,8 +9,8 @@ use redis::Commands;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OrderSide {
-    BUY,
-    SELL,
+    BID,
+    ASK,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -36,9 +36,9 @@ pub struct Order {
     pub stock: Stock,
     pub order_side: OrderSide,
     pub order_type: OrderType,
-    pub price: f32,
     pub qty: i32,
     pub time_created: u32,
+    pub price: Option<f32>,
 }
 
 impl fmt::Display for OrderType {
@@ -53,8 +53,8 @@ impl fmt::Display for OrderType {
 impl fmt::Display for OrderSide {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            OrderSide::BUY => write!(f, "BUY"),
-            OrderSide::SELL => write!(f, "SELL"),
+            OrderSide::BID => write!(f, "BID"),
+            OrderSide::ASK => write!(f, "ASK"),
         }
     }
 }

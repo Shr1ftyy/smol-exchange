@@ -38,8 +38,8 @@ mod tests {
                 1,
                 stock.clone(),
                 match rand::thread_rng().gen_range(0..2) {
-                    0 => engine::orderbook::OrderSide::BUY,
-                    _ => engine::orderbook::OrderSide::SELL,
+                    0 => engine::orderbook::OrderSide::BID,
+                    _ => engine::orderbook::OrderSide::ASK,
                 },
                 match rand::thread_rng().gen_range(0..2) {
                     0 => engine::orderbook::OrderType::LIMIT,

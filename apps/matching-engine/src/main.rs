@@ -21,7 +21,7 @@ fn main() {
         Uuid::new_v4(),
         1,
         stock,
-        engine::orderbook::OrderSide::BUY,
+        engine::orderbook::OrderSide::BID,
         engine::orderbook::OrderType::LIMIT,
         100.0,
         100,
