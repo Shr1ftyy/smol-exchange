@@ -6,6 +6,7 @@ use crate::errors::OrderError;
 use crate::errors::StockError;
 use crate::helpers::helpers;
 use serde::{Deserialize, Serialize};
+use prettytable::{Table, row};
 
 extern crate redis;
 use redis::Commands;
@@ -221,10 +222,18 @@ impl PriceLevel {
     }
 
     pub fn add_order(&mut self, order: Order) {
-        self.orders.push_back(order);
+        self.orders.push_back(order.clone());
+        self.qty += order.qty;
     }
 
     pub fn remove_order(&mut self, order_id: uuid::Uuid) {
+        // update quantity
+        let order: &Order = self
+            .orders
+            .iter()
+            .find(|order| order.order_id == order_id)
+            .unwrap();
+        self.qty -= order.qty;
         self.orders.retain(|order| order.order_id != order_id);
     }
 }
@@ -304,9 +313,10 @@ impl OrderBook {
     }
 
     // match order against orderbook given order id in orderbook
-    pub fn match_order(&mut self, order_id: uuid::Uuid) {
-        let order: &Order = self.oid_map.get(&order_id).unwrap();
-        let mut p_level_to_search = match order.order_side {
+    pub fn match_order(&mut self, order_id: uuid::Uuid) -> Result<(), OrderError> {
+        let order: &Order = self.oid_map.get(&order_id)
+            .ok_or(OrderError::InvalidOrderID)?;
+        let p_level_to_search = match order.order_side {
             OrderSide::BID => &mut self.ask_price_levels,
             OrderSide::ASK => &mut self.bid_price_levels,
         };
@@ -321,6 +331,43 @@ impl OrderBook {
                     OrderSide::BID => {
                         let mut price_key = helpers::f32_to_string(order.price.unwrap(), 2); // Assuming you've converted the price to a string key
                         while let Some(p_level) = p_level_to_search.get_mut(&price_key) {
+                            // break condition
+                            if qty == 0 {
+                                break;
+                            }
+                            let mut it = p_level.orders.iter_mut().peekable();
+                            while let Some(order_to_match) = it.next() {
+                                if qty == 0 || order_to_match.price > order.price {
+                                    orders_to_remove.push_back(order.order_id);
+                                    break;
+                                }
+
+                                if order_to_match.qty <= qty {
+                                    qty -= order_to_match.qty;
+                                    orders_to_remove.push_back(order_to_match.order_id);
+                                } else {
+                                    order_to_match.qty -= qty;
+                                    // update quantity of price level
+                                    p_level.qty -= qty;
+                                    qty = 0;
+                                }
+
+                                if it.peek().is_none() {
+                                    price_key =
+                                        helpers::f32_to_string(price_key.parse::<f32>().unwrap() - 0.01, 2);
+                                    break;
+                                }
+                            }
+                        }
+                        // update order in price levels, oid map, etc.
+                    }
+                    OrderSide::ASK => {
+                        let mut price_key = helpers::f32_to_string(order.price.unwrap(), 2); // Assuming you've converted the price to a string key
+                        while let Some(p_level) = p_level_to_search.get_mut(&price_key) {
+                            // break condition
+                            if qty == 0 {
+                                break;
+                            }
                             let mut it = p_level.orders.iter_mut().rev().peekable();
                             while let Some(order_to_match) = it.next() {
                                 if qty == 0 || order_to_match.price < order.price {
@@ -332,37 +379,13 @@ impl OrderBook {
                                     orders_to_remove.push_back(order_to_match.order_id);
                                 } else {
                                     order_to_match.qty -= qty;
+                                    p_level.qty -= qty;
                                     qty = 0;
                                 }
 
                                 if it.peek().is_none() {
                                     price_key =
-                                        helpers::f32_to_string(order.price.unwrap() - 0.01, 2);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    OrderSide::ASK => {
-                        let mut price_key = helpers::f32_to_string(order.price.unwrap(), 2); // Assuming you've converted the price to a string key
-                        while let Some(p_level) = p_level_to_search.get_mut(&price_key) {
-                            let mut it = p_level.orders.iter_mut().peekable();
-                            while let Some(order_to_match) = it.next() {
-                                if qty == 0 || order_to_match.price > order.price {
-                                    break;
-                                }
-
-                                if order_to_match.qty <= qty {
-                                    qty -= order_to_match.qty;
-                                    orders_to_remove.push_back(order_to_match.order_id);
-                                } else {
-                                    order_to_match.qty -= qty;
-                                    qty = 0;
-                                }
-
-                                if it.peek().is_none() {
-                                    price_key =
-                                        helpers::f32_to_string(order.price.unwrap() - 0.01, 2);
+                                        helpers::f32_to_string(price_key.parse::<f32>().unwrap() - 0.01, 2);
                                     break;
                                 }
                             }
@@ -373,8 +396,43 @@ impl OrderBook {
             OrderType::MARKET => {
                 match order.order_side {
                     OrderSide::BID => {
-                        let mut price_key = helpers::f32_to_string(order.price.unwrap(), 2); // Assuming you've converted the price to a string key
+                        // get market price (maximum bid price in p_level_to_search)
+                        let mut price_key = p_level_to_search.iter().last().unwrap().0.clone();
                         while let Some(p_level) = p_level_to_search.get_mut(&price_key) {
+                            // break condition
+                            if qty == 0 {
+                                break;
+                            }
+                            let mut it = p_level.orders.iter_mut().peekable();
+                            while let Some(order_to_match) = it.next() {
+                                if qty == 0 {
+                                    break;
+                                }
+
+                                if order_to_match.qty <= qty {
+                                    qty -= order_to_match.qty;
+                                    orders_to_remove.push_back(order_to_match.order_id);
+                                } else {
+                                    order_to_match.qty -= qty;
+                                    p_level.qty -= qty;
+                                    qty = 0;
+                                }
+
+                                if it.peek().is_none() {
+                                    price_key =
+                                        helpers::f32_to_string(price_key.parse::<f32>().unwrap() - 0.01, 2);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    OrderSide::ASK => {
+                        let mut price_key = p_level_to_search.iter().last().unwrap().0.clone();
+                        while let Some(p_level) = p_level_to_search.get_mut(&price_key) {
+                            // break condition
+                            if qty == 0 {
+                                break;
+                            }
                             let mut it = p_level.orders.iter_mut().rev().peekable();
                             while let Some(order_to_match) = it.next() {
                                 if qty == 0 {
@@ -386,37 +444,13 @@ impl OrderBook {
                                     orders_to_remove.push_back(order_to_match.order_id);
                                 } else {
                                     order_to_match.qty -= qty;
+                                    p_level.qty -= qty;
                                     qty = 0;
                                 }
 
                                 if it.peek().is_none() {
                                     price_key =
-                                        helpers::f32_to_string(order.price.unwrap() - 0.01, 2);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    OrderSide::ASK => {
-                        let mut price_key = helpers::f32_to_string(order.price.unwrap(), 2); // Assuming you've converted the price to a string key
-                        while let Some(p_level) = p_level_to_search.get_mut(&price_key) {
-                            let mut it = p_level.orders.iter_mut().peekable();
-                            while let Some(order_to_match) = it.next() {
-                                if qty == 0 {
-                                    break;
-                                }
-
-                                if order_to_match.qty <= qty {
-                                    qty -= order_to_match.qty;
-                                    orders_to_remove.push_back(order_to_match.order_id);
-                                } else {
-                                    order_to_match.qty -= qty;
-                                    qty = 0;
-                                }
-
-                                if it.peek().is_none() {
-                                    price_key =
-                                        helpers::f32_to_string(order.price.unwrap() - 0.01, 2);
+                                        helpers::f32_to_string(price_key.parse::<f32>().unwrap() - 0.01, 2);
                                     break;
                                 }
                             }
@@ -428,20 +462,44 @@ impl OrderBook {
 
         // remove orders that have been filled
         for order_id in orders_to_remove {
-            self.remove_order(order_id);
+            let res = self.remove_order(order_id);
+            match res {
+                Ok(_) => {
+                    println!("Order {} removed", order_id);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
         }
+
+        Ok(())
     }
 
-    // print orderbook
+    // print orderbook, with asks and bids side by side in a table, along with quantities at each price level
     pub fn print_orderbook(&self) {
-        println!("Orderbook for stock {}", self.stock_id);
-        println!("Bids:");
-        for (price, price_level) in self.bid_price_levels.iter() {
-            println!("Price: {}, Qty: {}", price, price_level.qty);
+        let mut table = Table::new();
+        table.add_row(row!["BID", "ASK"]);
+        let mut bid_it = self.bid_price_levels.iter().rev();
+        let mut ask_it = self.ask_price_levels.iter();
+        loop {
+            let bid = bid_it.next();
+            let ask = ask_it.next();
+            match (bid, ask) {
+                (Some(bid), Some(ask)) => {
+                    table.add_row(row![format!("{} @ {}", bid.1.qty, bid.0), format!("{} @ {}", ask.1.qty, ask.0)]);
+                }
+                (Some(bid), None) => {
+                    table.add_row(row![format!("{} @ {}", bid.1.qty, bid.0), ""]);
+                }
+                (None, Some(ask)) => {
+                    table.add_row(row!["", format!("{} @ {}", ask.1.qty, ask.0)]);
+                }
+                (None, None) => {
+                    break;
+                }
+            }
         }
-        println!("Asks:");
-        for (price, price_level) in self.ask_price_levels.iter() {
-            println!("Price: {}, Qty: {}", price, price_level.qty);
-        }
+        table.printstd();
     }
 }
