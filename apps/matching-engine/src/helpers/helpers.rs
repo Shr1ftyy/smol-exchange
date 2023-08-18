@@ -1,6 +1,5 @@
 pub fn f32_to_string(f: f32, precision: usize) -> String {
     let mut s = f.to_string();
-    dbg!(&s);
     let mut split = s.split('.');
 
     // the number won't always have a decimal and fraction, so we account for it
