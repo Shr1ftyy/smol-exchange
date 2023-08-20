@@ -58,7 +58,7 @@ fn main() {
     let mut matched_orders: Vec<Order> = Vec::new();
     for o in &orders {
 
-        let res = o_book.match_order(o.clone().order_id);
+        let res = o_book.match_order(o.clone());
         match res {
             Ok(_) => {
                 // assert if it's in the orderbook

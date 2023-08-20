@@ -60,6 +60,7 @@ pub struct OrderBook {
     pub bid_price_levels: BTreeMap<String, PriceLevel>,
     pub ask_price_levels: BTreeMap<String, PriceLevel>,
     pub oid_map: BTreeMap<uuid::Uuid, Order>,
+    pub order_queue: VecDeque<Order>,
     pub last_market_price: Option<f32>,
 }
 
@@ -122,37 +123,22 @@ impl Stock {
         if self.ticker.is_empty() {
             return Err(StockError::InvalidTicker);
         }
-        match self.total_issued {
-            Some(total_issued) => {
-                if total_issued <= 0 {
-                    return Err(StockError::InvalidTotalIssued);
-                }
-            }
-            None => {
+        // the rest of the parameters are optional, so only check them if they are Some()
+        if let Some(total_issued) = self.total_issued {
+            if total_issued <= 0 {
                 return Err(StockError::InvalidTotalIssued);
             }
         }
-        match self.outstanding_shares {
-            Some(outstanding_shares) => {
-                if outstanding_shares <= 0 {
-                    return Err(StockError::InvalidOutstandingShares);
-                }
-            }
-            None => {
+        if let Some(outstanding_shares) = self.outstanding_shares {
+            if outstanding_shares <= 0 {
                 return Err(StockError::InvalidOutstandingShares);
             }
         }
-        match self.time_created {
-            Some(time_created) => {
-                if time_created <= 0 {
-                    return Err(StockError::InvalidTimeCreated);
-                }
-            }
-            None => {
+        if let Some(time_created) = self.time_created {
+            if time_created <= 0 {
                 return Err(StockError::InvalidTimeCreated);
             }
         }
-
         Ok(()) // If all checks pass, return Ok(())
     }
 
@@ -269,7 +255,9 @@ impl OrderBook {
             stock_id,
             bid_price_levels: BTreeMap::new(),
             ask_price_levels: BTreeMap::new(),
+            order_queue: VecDeque::new(),
             oid_map: BTreeMap::new(),
+            last_market_price: None,
         };
 
         orderbook
@@ -299,13 +287,22 @@ impl OrderBook {
         self.stock_id
     }
 
+    pub fn queue_order(&mut self, order: Order) {
+        self.order_queue.push_back(order);
+    }
+
     pub fn add_order(&mut self, order: Order) -> Result<(), OrderError> {
         let price_key;
+
+
         match order.price {
             Some(price) => {
                 price_key = helpers::f32_to_string(price, 2);
                 self.oid_map.insert(order.order_id, order.clone());
             }
+            // TODO, modify this to handle the pricing of a market order
+            // (dependent on last market price), and what happens if the last market
+            // price is None, etc., etc., etc.
             None => {
                 // get best price (depending on if it is a bid or ask) from price levels
                 // and set price_key to that pricea
@@ -338,43 +335,53 @@ impl OrderBook {
             }
         }
 
-        let price_level: &mut PriceLevel = match order.order_side {
-            OrderSide::BID => {
-                self.bid_price_levels
-                    .entry(price_key.clone())
-                    .or_insert(PriceLevel::new(
-                        price_key.parse().unwrap(),
-                        order.clone().qty,
-                    ))
-            }
-            OrderSide::ASK => {
-                self.ask_price_levels
-                    .entry(price_key.clone())
-                    .or_insert(PriceLevel::new(
-                        price_key.parse().unwrap(),
-                        order.clone().qty,
-                    ))
-            }
+        let price_level = match order.order_side {
+            OrderSide::BID => self
+                .bid_price_levels
+                .entry(price_key)
+                .or_insert(PriceLevel::new(order.price.unwrap(), 0)),
+            OrderSide::ASK => self
+                .ask_price_levels
+                .entry(price_key)
+                .or_insert(PriceLevel::new(order.price.unwrap(), 0)),
         };
 
         price_level.add_order(order.clone());
         Ok(())
     }
 
+    fn _remove_price_level(&mut self, order_side: OrderSide, price: f32) {
+        match order_side {
+            OrderSide::BID => {
+                self.bid_price_levels
+                    .remove(&helpers::f32_to_string(price, 2));
+            }
+            OrderSide::ASK => {
+                self.ask_price_levels
+                    .remove(&helpers::f32_to_string(price, 2));
+            }
+        }
+    }
+
     // delete an order (affects pricelevel and orderbook)
-    pub fn delete_order(&mut self, order_id: uuid::Uuid) -> Result<(), OrderError> {
+    fn _delete_order(&mut self, order_id: uuid::Uuid) -> Result<(), OrderError> {
         let order: Order = match self.oid_map.get(&order_id) {
             Some(order) => order.clone(),
             None => return Err(OrderError::InvalidOrderID),
         };
 
         // remove order from price level
-        let price_level = match self.get_price_level(order.order_side, order.price.unwrap()) {
+        let price_level = match self.get_price_level(order.clone().order_side, order.clone().price.unwrap()) {
             Some(price_level) => price_level,
             None => return Err(OrderError::InvalidPrice),
         };
 
-        price_level.remove_order(order);
+        price_level.remove_order(order.clone());
+
+        // delete price level if qty is les than 0
+        if price_level.qty <= 0 {
+            self._remove_price_level(order.clone().order_side, order.clone().price.unwrap());
+        }
 
         // remove order from oid map
         self.oid_map.remove(&order_id);
@@ -382,8 +389,13 @@ impl OrderBook {
         Ok(())
     }
 
+    // wrapper for _delete_order that actually emits a deletion event
+    pub fn delete_order(&mut self, order_id: uuid::Uuid) -> Result<(), OrderError> {
+        self._delete_order(order_id)
+    }
+
     // modifying an order (affects pricelevel and orderbook)
-    pub fn modify_order(
+    fn _modify_order(
         &mut self,
         order_id: uuid::Uuid,
         new_qty: i32,
@@ -391,7 +403,7 @@ impl OrderBook {
     ) -> Result<(), OrderError> {
         // remove order if the new qty is 0 or less
         if new_qty <= 0 {
-            return self.delete_order(order_id);
+            return self._delete_order(order_id);
         }
 
         let mut order = match self.oid_map.get(&order_id) {
@@ -418,142 +430,120 @@ impl OrderBook {
         Ok(())
     }
 
+    // wrapper for _modify_order that actually emits a modification event
+    pub fn modify_order(
+        &mut self,
+        order_id: uuid::Uuid,
+        new_qty: i32,
+        new_price: Option<f32>,
+    ) -> Result<(), OrderError> {
+        self._modify_order(order_id, new_qty, new_price)
+    }
+
     // match order against orderbook given order id in orderbook
-    pub fn match_order(&mut self, order_id: uuid::Uuid) -> Result<(), OrderError> {
-        let mut order: Order = match self.oid_map.get(&order_id) {
-            Some(order) => order.clone(),
-            None => return Err(OrderError::InvalidOrderID),
+    pub fn match_order(&mut self, mut order: Order) -> Result<(), OrderError> {
+        let price_level_to_search = match order.order_side {
+            OrderSide::BID => self.ask_price_levels.clone(),
+            OrderSide::ASK => self.bid_price_levels.clone(),
         };
-        // print order
-        dbg!("Matching order: {:?}", &order);
 
-        let mut orders_to_remove: Vec<uuid::Uuid> = Vec::new();
+        let it = price_level_to_search.iter();
 
-        // match orders depending on order side, set price level to either bid or ask depending on order side (should be opposite of order side)
-        match order.order_side {
-            OrderSide::BID => {
-                let mut stop_loop: bool = false;
-                // get clone of ask price_levels
-                let ask_price_levels: BTreeMap<String, PriceLevel> = self.ask_price_levels.clone();
-                let it = ask_price_levels.iter();
-                for (_, p_level) in it {
-                    if stop_loop {
-                        break;
-                    }
-
-                    for order_to_match_id in p_level.orders.iter() {
-                        if order.qty == 0 {
-                            orders_to_remove.push(order.order_id);
-                            stop_loop = true;
-                            break;
-                        }
-
-                        let order_to_match: Order = match self.oid_map.get(&order_to_match_id) {
-                            Some(order) => order.clone(),
-                            None => return Err(OrderError::InvalidOrderID),
-                        };
-
-                        // if order is a limit order, and the current price level is higher than limit order price, break
-                        if order.order_type == OrderType::LIMIT
-                            && order_to_match.price.unwrap() > order.price.unwrap()
-                        {
-                            stop_loop = true;
-                            break;
-                        }
-
-                        if order_to_match.qty < order.qty {
-                            order.qty -= order_to_match.qty;
-                            orders_to_remove.push(*order_to_match_id);
-                        } else {
-                            // update order qty, and order_to_match with self.modify order
-                            let order_to_match_qty: i32 = order_to_match.qty - order.qty;
-                            match self.modify_order(
-                                *order_to_match_id,
-                                order_to_match_qty,
-                                order_to_match.price,
-                            ) {
-                                Ok(_) => {}
-                                Err(e) => return Err(e),
-                            }
-
-                            order.qty = 0;
-                        }
-                    }
-                }
-
-                // modify order
-                match self.modify_order(order_id, order.qty, order.price) {
-                    Ok(_) => {}
-                    Err(e) => return Err(e),
-                }
+        for (_, p_level) in it {
+            if order.qty == 0 {
+                break;
             }
-            OrderSide::ASK => {
-                let mut stop_loop: bool = false;
-                // get clone of bid price_levels
-                let bid_price_levels: BTreeMap<String, PriceLevel> = self.bid_price_levels.clone();
-                let it = bid_price_levels.iter();
-                for (_, p_level) in it {
-                    if stop_loop {
-                        break;
-                    }
 
-                    for order_to_match_id in p_level.orders.iter() {
-                        if order.qty == 0 {
-                            orders_to_remove.push(order.order_id);
-                            stop_loop = true;
-                            break;
-                        }
+            let order_it = p_level.orders.iter();
 
-                        let order_to_match: Order = match self.oid_map.get(&order_to_match_id) {
-                            Some(order) => order.clone(),
-                            None => return Err(OrderError::InvalidOrderID),
-                        };
-
-                        // if order is a limit order, and the current price level is lower than limit order price, break
-                        if order.order_type == OrderType::LIMIT
-                            && order_to_match.price.unwrap() < order.price.unwrap()
-                        {
-                            stop_loop = true;
-                            break;
-                        }
-
-                        if order_to_match.qty < order.qty {
-                            order.qty -= order_to_match.qty;
-                            orders_to_remove.push(*order_to_match_id);
-                        } else {
-                            // update order qty, and order_to_match with self.modify order
-                            let order_to_match_qty: i32 = order_to_match.qty - order.qty;
-                            match self.modify_order(
-                                *order_to_match_id,
-                                order_to_match_qty,
-                                order_to_match.price,
-                            ) {
-                                Ok(_) => {}
-                                Err(e) => return Err(e),
-                            }
-
-                            order.qty = 0;
-                        }
-                    }
+            for order_to_match_uuid in order_it {
+                if order.qty == 0 {
+                    break;
                 }
 
-                // modify order
-                match self.modify_order(order_id, order.qty, order.price) {
-                    Ok(_) => {}
-                    Err(e) => return Err(e),
+                let mut order_to_match = match self.oid_map.get(order_to_match_uuid) {
+                    Some(order) => order.clone(),
+                    None => return Err(OrderError::InvalidOrderID),
+                };
+
+                if order_to_match.qty > order.qty {
+                    // order in orderbook has more qty than order to match
+                    // subtract order qty from orderbook order qty
+                    // subtract order qty from order qty
+                    // add trade to tradebook
+                    // delete order from orderbook
+                    // modify order in orderbook
+                    // return
+                    let trade_qty = order.qty;
+                    order.qty -= trade_qty;
+                    order_to_match.qty -= trade_qty;
+                    // instead of doing this, we create a new transaction, and eventually send it to the redis instance
+                    // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
+                    // self.tradebook.push_back(trade);
+                    match self._modify_order(
+                        order_to_match.order_id,
+                        order_to_match.qty,
+                        order_to_match.price,
+                    ) {
+                        Ok(_) => {}
+                        Err(e) => return Err(e),
+                    }
+                } else {
+                    // order in orderbook has less or equal qty than order to match
+                    // subtract order qty from orderbook order qty
+                    // subtract order qty from order qty
+                    // add trade to tradebook
+                    // delete order from orderbook
+                    // modify order in orderbook
+                    // continue
+                    let trade_qty = order_to_match.qty;
+                    order.qty -= trade_qty;
+                    order_to_match.qty -= trade_qty;
+                    // instead of doing this, we create a new transaction, and eventually send it to the redis instance
+                    // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
+                    // self.tradebook.push_back(trade);
+                    match self._delete_order(order_to_match.order_id) {
+                        Ok(_) => {}
+                        Err(e) => return Err(e),
+                    }
                 }
             }
         }
 
-        // remove orders
-        for order_id in orders_to_remove {
-            match self.delete_order(order_id) {
+        // add order to orderbook if it still has qty
+        if order.qty > 0 {
+            match self.add_order(order.clone()) {
                 Ok(_) => {}
                 Err(e) => return Err(e),
             }
         }
 
         Ok(())
+    }
+
+    // executes order from queue (matches order)
+    pub fn execute_order(&mut self) -> Result<(), OrderError> {
+        // get order from queue
+        let order: Order = match self.order_queue.pop_front() {
+            Some(order) => order,
+            None => return Err(OrderError::OrderQueueEmpty),
+        };
+
+        // attempt to match order
+        match self.match_order(order) {
+            Ok(_) => Ok(()),
+            Err(e) => return Err(e),
+        }
+    }
+
+    // execute all orders in queue until empty
+    pub fn execute_all_orders(&mut self) -> Result<(), OrderError> {
+        loop {
+            match self.execute_order() {
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     // print orderbook, with asks and bids side by side in a table, along with quantities at each price level

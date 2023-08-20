@@ -10,8 +10,6 @@ mod tests {
     use uuid::Uuid;
     use rand_distr::{Distribution, Triangular, TriangularError};
 
-
-    // function to generate a bunch of orders:
     const SEED: u64 = 69420;
     fn generate_orders() -> Vec<Order> {
         let mut rng = ChaCha8Rng::seed_from_u64(SEED);
@@ -116,130 +114,97 @@ mod tests {
     }
 
     #[test]
-    fn test_adding_orders_orderbook() {
+    fn test_adding_orders() {
         let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
-        let orders: Vec<Order> = match generate_triangular_orders(
-            500, 
-            OrderType::LIMIT, 
-            OrderSide::BID, 
-            (87.0, 90.0), 
-            (10, 100)
-        ) 
-            { 
-            Ok(orders) => orders,
-            Err(e) => panic!("Error generating orders: {:?}", e),
-        };
-        // print lentgh of orders
-        println!("Number of orders: {}", orders.len());
-
+        let orders = generate_orders();
         for order in orders {
-            let res = o_book.add_order(order.clone());
-            match res {
-                Ok(_) => {
-                    // assert if it's in the orderbook
-                    print!("checking if order is in orderbook: {} ... ", order.order_id);
-                    assert!(o_book.get_oid_map().contains_key(&order.order_id));
-                    println!("Order added successfully!");
-                }
-                Err(e) => println!("Error adding order: {:?}", e),
-            }
+            o_book.add_order(order);
         }
+
+        // test number of orders in the orderbook
+        assert_eq!(o_book.oid_map.len(), 200);
     }
 
     #[test]
-    // matching orders test
     fn test_matching_orders() {
         let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
-        let ask_limit_orders = match generate_triangular_orders(500, OrderType::LIMIT, OrderSide::ASK, (87.0, 90.0), (10, 12)){
-            Ok(orders) => orders,
-            Err(e) => panic!("Error generating orders: {:?}", e),
-        };
 
-        // market ask orders (TODO: test market ask order matching?)
-        // let ask_orders = match generate_triangular_orders(500, OrderType::MARKET, OrderSide::ASK, (87.0, 90.0), (10, 20)){
-        //     Ok(orders) => orders,
-        //     Err(e) => panic!("Error generating orders: {:?}", e),
-        // };
+        // scenarios to test:
+        // 1. limit asks in order book -> add limit bid -> match
+        let mut limit_asks = Vec::new();
 
-        let bid_market_orders = match generate_triangular_orders(100, OrderType::MARKET, OrderSide::BID, (85.0, 88.0), (5, 10)){
-            Ok(orders) => orders,
-            Err(e) => panic!("Error generating orders: {:?}", e),
-        };
-
-        let bid_limit_orders = match generate_triangular_orders(100, OrderType::LIMIT, OrderSide::BID, (85.0, 88.0), (5, 10)){
-            Ok(orders) => orders,
-            Err(e) => panic!("Error generating orders: {:?}", e),
-        };
-
-        let mut highest_bid_price = f32::NEG_INFINITY;
-
-        // add ask limit orders into the orderbook
-        for order in ask_limit_orders {
-            let res = &o_book.add_order(order.clone());
-            match res {
-                Ok(_) => {
-                    // assert if it's in the orderbook
-                    print!("checking if order is in orderbook: {} ... ", order.order_id);
-                    assert!(o_book.get_oid_map().contains_key(&order.order_id));
-                    println!("Order added successfully!");
-                    if order.order_side == engine::orderbook::OrderSide::BID {
-                        if order.price.unwrap() > highest_bid_price {
-                            // round to 2 decimal places before assigning
-                            highest_bid_price = (order.price.unwrap() * 100.0).round() / 100.0;
-                        }
-                    }
-                }
-                Err(e) => println!("Error adding order: {:?}", e),
-            }
+        for i in 0..6 {
+            let order = Order::new(
+                Uuid::new_v4(),
+                1,
+                Stock::new(
+                    uuid::Uuid::new_v4(),
+                    format!("Stock {}", i),
+                    format!("STK{}", i),
+                    None, None, None
+                ),
+                engine::orderbook::OrderSide::ASK,
+                engine::orderbook::OrderType::LIMIT,
+                100,
+                chrono::Utc::now().timestamp() as u32,
+                Some(88.0 + (0.5 * (i as f32))),
+            );
+            limit_asks.push(order);
         }
 
-        // add bid market orders into the orderbook
-        for order in bid_market_orders {
-            let res = &o_book.add_order(order.clone());
-            match res {
-                Ok(_) => {
-                    // assert if it's in the orderbook
-                    print!("checking if order is in orderbook: {} ... ", order.order_id);
-                    assert!(o_book.get_oid_map().contains_key(&order.order_id));
-                    println!("Order added successfully!");
-                    if order.order_side == engine::orderbook::OrderSide::BID {
-                        if order.price.unwrap() > highest_bid_price {
-                            // round to 2 decimal places before assigning
-                            highest_bid_price = (order.price.unwrap() * 100.0).round() / 100.0;
-                        }
-                    }
-                }
-                Err(e) => println!("Error adding order: {:?}", e),
-            }
+        for ask in limit_asks {
+            o_book.queue_order(ask);
         }
 
-        println!("Orderbook before matching orders: ");
+        let mut limit_bids = Vec::new();
+        for i in 0..6 {
+            let order = Order::new(
+                Uuid::new_v4(),
+                1,
+                Stock::new(
+                    uuid::Uuid::new_v4(),
+                    format!("Stock {}", i),
+                    format!("STK{}", i),
+                    None, None, None
+                ),
+                engine::orderbook::OrderSide::BID,
+                engine::orderbook::OrderType::LIMIT,
+                100,
+                chrono::Utc::now().timestamp() as u32,
+                Some(91.5 - (0.5 * (i as f32))),
+            );
+            limit_bids.push(order);
+        }
+
+        match o_book.execute_all_orders() {
+            Ok(_) => (),
+            Err(e) => println!("Error executing orders: {}", e),
+        }
+
         o_book.print_orderbook();
 
-        let p_level: PriceLevel =
-            match o_book.get_price_level(engine::orderbook::OrderSide::BID, highest_bid_price) {
-                Some(p) => p.clone(),
-                None => panic!("Price level not found!"),
-            };
-
-        for order_id in p_level.orders.iter() {
-            let res = o_book.match_order(*order_id);
-            match res {
-                Ok(_) => {
-                    // assert if it's in the orderbook 
-                    print!("checking if order is in orderbook: {} ... ", order_id);
-                    // if order not in oid map, print that it got filled successfully
-                    if !o_book.get_oid_map().contains_key(order_id) {
-                        println!("Order filled successfully!");
-                    } else {
-                        println!("Order not filled!");
-                    }
-                }
-                Err(e) => println!("Error matching order: {:?}", e),
-            }
+        for bid in limit_bids {
+            o_book.queue_order(bid);
         }
 
-        println!("Orderbook after matching orders: ");
+        match o_book.execute_all_orders() {
+            Ok(_) => (),
+            Err(e) => println!("Error executing orders: {}", e),
+        }
+
         o_book.print_orderbook();
+
+        // 2. limit bids in order book -> add limit ask -> match
+        // 3. limit asks in order book -> add market bid -> match
+        // 4. limit bids in order book -> add market ask -> match
+        // 5. market asks in order book -> add limit bid -> match
+        // 6. market bids in order book -> add limit ask -> match
+        // 7. market asks in order book -> add market bid -> match
+        // 8. market bids in order book -> add market ask -> match
+        // 9. no asks in order book -> add limit bid -> no match
+        // 10. no bids in order book -> add limit ask -> no match
+        // 11. no asks in order book -> add market bid -> no match
+        // 12. no bids in order book -> add market ask -> no match
+
     }
 }

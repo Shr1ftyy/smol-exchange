@@ -9,6 +9,7 @@ pub enum OrderError {
     InvalidQuantity,
     InvalidOrderSide,
     InvalidTimeCreated,
+    OrderQueueEmpty,
     Other(String), // Catch-all for unexpected errors, with a descriptive message.
 }
 
@@ -22,6 +23,7 @@ impl fmt::Display for OrderError {
             OrderError::InvalidQuantity => write!(f, "InvalidQuantity"),
             OrderError::InvalidOrderSide => write!(f, "InvalidOrderSide"),
             OrderError::InvalidTimeCreated => write!(f, "InvalidTimeCreated"),
+            OrderError::OrderQueueEmpty => write!(f, "OrderQueueEmpty"),
             OrderError::Other(e) => write!(f, "Other: {}", e),
         }
     }
@@ -50,4 +52,9 @@ impl fmt::Display for StockError {
             StockError::Other(e) => write!(f, "Other: {}", e),
         }
     }
+}
+
+pub enum OrderQueueError {
+    OrderQueueEmpty,
+    Other(String), // Catch-all for unexpected errors, with a descriptive message.
 }
