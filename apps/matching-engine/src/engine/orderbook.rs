@@ -161,7 +161,7 @@ impl Stock {
         };
 
         match stock.validate() {
-            Ok(_) => println!("Stock is valid!"),
+            Ok(_) => {}
             Err(e) => println!("Error validating stock: {:?}", e),
         }
 
@@ -180,14 +180,22 @@ impl Order {
         if self.stock.stock_id == uuid::Uuid::nil() {
             return Err(OrderError::InvalidStockID);
         }
-        if self.price <= Some(0.0) {
-            return Err(OrderError::InvalidPrice);
+        match self.price {
+            Some(price) => {
+                if price <= 0.0 {
+                    return Err(OrderError::InvalidPrice);
+                }
+            }
+            None => {}
         }
-        if self.qty == 0 {
-            return Err(OrderError::InvalidQuantity);
+        match self.qty {
+            qty if qty <= 0 => return Err(OrderError::InvalidQuantity),
+            qty if qty > 1000000 => return Err(OrderError::InvalidQuantity),
+            _ => {}
         }
-        if self.time_created == 0 {
-            return Err(OrderError::InvalidTimeCreated);
+        match self.time_created {
+            time if time <= 0 => return Err(OrderError::InvalidTimeCreated),
+            _ => {}
         }
 
         Ok(()) // If all checks pass, return Ok(())
@@ -215,7 +223,7 @@ impl Order {
         };
 
         match order.validate() {
-            Ok(_) => println!("Order is valid!"),
+            Ok(_) => {}
             Err(e) => println!("Error validating order: {:?}", e),
         }
 
@@ -291,62 +299,52 @@ impl OrderBook {
         self.order_queue.push_back(order);
     }
 
-    pub fn add_order(&mut self, order: Order) -> Result<(), OrderError> {
-        let price_key;
+    pub fn add_order(&mut self, mut order: Order) -> Result<(), OrderError> {
+        let price_key: String;
 
-
-        match order.price {
-            Some(price) => {
-                price_key = helpers::f32_to_string(price, 2);
-                self.oid_map.insert(order.order_id, order.clone());
+        match order.order_type {
+            OrderType::MARKET => {
+                // get last market price, and set order.price to the last market price
+                match self.last_market_price {
+                    Some(last_market_price) => {
+                        order.price = Some(last_market_price);
+                    }
+                    None => {
+                        // don't add order to orderbook and return error
+                        return Err(OrderError::InvalidPrice);
+                    }
+                }
             }
-            // TODO, modify this to handle the pricing of a market order
-            // (dependent on last market price), and what happens if the last market
-            // price is None, etc., etc., etc.
+            _ => {}
+        }
+
+        price_key = helpers::f32_to_string(order.price.unwrap(), 2);
+
+        // add order to oid map and price level
+        self.oid_map.insert(order.order_id, order.clone());
+        match self.get_price_level(order.order_side, order.price.unwrap()) {
+            Some(price_level) => {
+                price_level.add_order(order);
+            }
             None => {
-                // get best price (depending on if it is a bid or ask) from price levels
-                // and set price_key to that pricea
+                // create new price level
+                let mut price_level: PriceLevel = PriceLevel::new(order.price.unwrap(), 0);
+                price_level.add_order(order.clone());
+
+                // add price level to orderbook
                 match order.order_side {
                     OrderSide::BID => {
-                        let best_price_level = self.ask_price_levels.iter().next();
-                        match best_price_level {
-                            Some((price, _)) => {
-                                price_key = price.clone();
-                                self.oid_map.insert(order.order_id, order.clone());
-                            }
-                            None => {
-                                return Err(OrderError::InvalidPrice);
-                            }
-                        }
+                        self.bid_price_levels
+                            .insert(price_key, price_level);
                     }
                     OrderSide::ASK => {
-                        let best_price_level = self.bid_price_levels.iter().rev().next();
-                        match best_price_level {
-                            Some((price, _)) => {
-                                price_key = price.clone();
-                                self.oid_map.insert(order.order_id, order.clone());
-                            }
-                            None => {
-                                return Err(OrderError::InvalidPrice);
-                            }
-                        }
+                        self.ask_price_levels
+                            .insert(price_key, price_level);
                     }
                 }
             }
         }
 
-        let price_level = match order.order_side {
-            OrderSide::BID => self
-                .bid_price_levels
-                .entry(price_key)
-                .or_insert(PriceLevel::new(order.price.unwrap(), 0)),
-            OrderSide::ASK => self
-                .ask_price_levels
-                .entry(price_key)
-                .or_insert(PriceLevel::new(order.price.unwrap(), 0)),
-        };
-
-        price_level.add_order(order.clone());
         Ok(())
     }
 
@@ -449,62 +447,140 @@ impl OrderBook {
 
         let it = price_level_to_search.iter();
 
-        for (_, p_level) in it {
-            if order.qty == 0 {
-                break;
-            }
-
-            let order_it = p_level.orders.iter();
-
-            for order_to_match_uuid in order_it {
-                if order.qty == 0 {
-                    break;
-                }
-
-                let mut order_to_match = match self.oid_map.get(order_to_match_uuid) {
-                    Some(order) => order.clone(),
-                    None => return Err(OrderError::InvalidOrderID),
-                };
-
-                if order_to_match.qty > order.qty {
-                    // order in orderbook has more qty than order to match
-                    // subtract order qty from orderbook order qty
-                    // subtract order qty from order qty
-                    // add trade to tradebook
-                    // delete order from orderbook
-                    // modify order in orderbook
-                    // return
-                    let trade_qty = order.qty;
-                    order.qty -= trade_qty;
-                    order_to_match.qty -= trade_qty;
-                    // instead of doing this, we create a new transaction, and eventually send it to the redis instance
-                    // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
-                    // self.tradebook.push_back(trade);
-                    match self._modify_order(
-                        order_to_match.order_id,
-                        order_to_match.qty,
-                        order_to_match.price,
-                    ) {
-                        Ok(_) => {}
-                        Err(e) => return Err(e),
+        match order.order_side { 
+            OrderSide::BID => {
+                for (_, p_level) in it {
+                    if order.qty == 0 {
+                        break;
                     }
-                } else {
-                    // order in orderbook has less or equal qty than order to match
-                    // subtract order qty from orderbook order qty
-                    // subtract order qty from order qty
-                    // add trade to tradebook
-                    // delete order from orderbook
-                    // modify order in orderbook
-                    // continue
-                    let trade_qty = order_to_match.qty;
-                    order.qty -= trade_qty;
-                    order_to_match.qty -= trade_qty;
-                    // instead of doing this, we create a new transaction, and eventually send it to the redis instance
-                    // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
-                    // self.tradebook.push_back(trade);
-                    match self._delete_order(order_to_match.order_id) {
-                        Ok(_) => {}
-                        Err(e) => return Err(e),
+
+                    let order_it = p_level.orders.iter();
+
+                    for order_to_match_uuid in order_it {
+                        if order.qty == 0 {
+                            break;
+                        }
+
+                        let mut order_to_match = match self.oid_map.get(order_to_match_uuid) {
+                            Some(order) => order.clone(),
+                            None => return Err(OrderError::InvalidOrderID),
+                        };
+
+                        if order_to_match.qty > order.qty {
+                            // order in orderbook has more qty than order to match
+                            // subtract order qty from orderbook order qty
+                            // subtract order qty from order qty
+                            // add trade to tradebook
+                            // delete order from orderbook
+                            // modify order in orderbook
+                            // return
+                            let trade_qty = order.qty;
+                            order.qty -= trade_qty;
+                            order_to_match.qty -= trade_qty;
+                            // instead of doing this, we create a new transaction, and eventually send it to the redis instance
+                            // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
+                            // self.tradebook.push_back(trade);
+                            match self._modify_order(
+                                order_to_match.order_id,
+                                order_to_match.qty,
+                                order_to_match.price,
+                            ) {
+                                Ok(_) => {}
+                                Err(e) => return Err(e),
+                            }
+
+                            // set last market price to the ask price
+                            self.last_market_price = Some(order_to_match.price.unwrap());
+                        } else {
+                            // order in orderbook has less or equal qty than order to match
+                            // subtract order qty from orderbook order qty
+                            // subtract order qty from order qty
+                            // add trade to tradebook
+                            // delete order from orderbook
+                            // modify order in orderbook
+                            // continue
+                            let trade_qty = order_to_match.qty;
+                            order.qty -= trade_qty;
+                            order_to_match.qty -= trade_qty;
+                            // instead of doing this, we create a new transaction, and eventually send it to the redis instance
+                            // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
+                            // self.tradebook.push_back(trade);
+                            match self._delete_order(order_to_match.order_id) {
+                                Ok(_) => {}
+                                Err(e) => return Err(e),
+                            }
+
+                            // set last market price to the ask price
+                            self.last_market_price = Some(order_to_match.price.unwrap());
+                        }
+                    }
+                }
+            }
+            OrderSide::ASK => {
+                for (_, p_level) in it.rev() {
+                    if order.qty == 0 {
+                        break;
+                    }
+
+                    let order_it = p_level.orders.iter();
+
+                    for order_to_match_uuid in order_it {
+                        if order.qty == 0 {
+                            break;
+                        }
+
+                        let mut order_to_match = match self.oid_map.get(order_to_match_uuid) {
+                            Some(order) => order.clone(),
+                            None => return Err(OrderError::InvalidOrderID),
+                        };
+
+                        if order_to_match.qty > order.qty {
+                            // order in orderbook has more qty than order to match
+                            // subtract order qty from orderbook order qty
+                            // subtract order qty from order qty
+                            // add trade to tradebook
+                            // delete order from orderbook
+                            // modify order in orderbook
+                            // return
+                            let trade_qty = order.qty;
+                            order.qty -= trade_qty;
+                            order_to_match.qty -= trade_qty;
+                            // instead of doing this, we create a new transaction, and eventually send it to the redis instance
+                            // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
+                            // self.tradebook.push_back(trade);
+                            match self._modify_order(
+                                order_to_match.order_id,
+                                order_to_match.qty,
+                                order_to_match.price,
+                            ) {
+                                Ok(_) => {}
+                                Err(e) => return Err(e),
+                            }
+
+                            // set last market price to the ask price
+                            self.last_market_price = Some(order_to_match.price.unwrap());
+                        } else {
+                            // order in orderbook has less or equal qty than order to match
+                            // subtract order qty from orderbook order qty
+                            // subtract order qty from order qty
+                            // add trade to tradebook
+                            // delete order from orderbook
+                            // modify order in orderbook
+                            // continue
+                            let trade_qty = order_to_match.qty;
+                            order.qty -= trade_qty;
+                            order_to_match.qty -= trade_qty;
+                            // instead of doing this, we create a new transaction, and eventually send it to the redis instance
+                            // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
+                            // self.tradebook.push_back(trade);
+                            match self._delete_order(order_to_match.order_id) {
+                                Ok(_) => {}
+                                Err(e) => return Err(e),
+                            }
+
+                            // set last market price to the ask price
+                            self.last_market_price = Some(order_to_match.price.unwrap());
+                        }
                     }
                 }
             }
