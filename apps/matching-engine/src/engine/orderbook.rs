@@ -334,12 +334,10 @@ impl OrderBook {
                 // add price level to orderbook
                 match order.order_side {
                     OrderSide::BID => {
-                        self.bid_price_levels
-                            .insert(price_key, price_level);
+                        self.bid_price_levels.insert(price_key, price_level);
                     }
                     OrderSide::ASK => {
-                        self.ask_price_levels
-                            .insert(price_key, price_level);
+                        self.ask_price_levels.insert(price_key, price_level);
                     }
                 }
             }
@@ -369,10 +367,11 @@ impl OrderBook {
         };
 
         // remove order from price level
-        let price_level = match self.get_price_level(order.clone().order_side, order.clone().price.unwrap()) {
-            Some(price_level) => price_level,
-            None => return Err(OrderError::InvalidPrice),
-        };
+        let price_level =
+            match self.get_price_level(order.clone().order_side, order.clone().price.unwrap()) {
+                Some(price_level) => price_level,
+                None => return Err(OrderError::InvalidPrice),
+            };
 
         price_level.remove_order(order.clone());
 
@@ -447,10 +446,13 @@ impl OrderBook {
 
         let it = price_level_to_search.iter();
 
-        match order.order_side { 
+        match order.order_side {
             OrderSide::BID => {
                 for (_, p_level) in it {
-                    if order.qty == 0 {
+                    if order.qty == 0
+                        || (order.order_type == OrderType::LIMIT
+                            && p_level.price > order.price.unwrap())
+                    {
                         break;
                     }
 
@@ -518,7 +520,10 @@ impl OrderBook {
             }
             OrderSide::ASK => {
                 for (_, p_level) in it.rev() {
-                    if order.qty == 0 {
+                    if order.qty == 0
+                        || (order.order_type == OrderType::LIMIT
+                            && p_level.price < order.price.unwrap())
+                    {
                         break;
                     }
 

@@ -84,10 +84,20 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(SEED);
         let mut orders: Vec<Order> = Vec::new();
         let triangular: Triangular<f32> =
-            match Triangular::new(price_range.0, price_range.1, price_range.0) {
+            match Triangular::new(price_range.0, price_range.1, price_range.1) {
                 Ok(t) => t,
                 Err(e) => return Err(e),
             };
+
+        let qty_sample = match Triangular::new(
+            quantity_range.0 as f32,
+            quantity_range.1 as f32,
+            quantity_range.0 as f32,
+        ) {
+            Ok(t) => t,
+            Err(e) => return Err(e),
+        };
+
         for i in 0..num_orders {
             let price: f32 = triangular.sample(&mut rng);
             // Round to 2 decimal places
@@ -105,7 +115,7 @@ mod tests {
                 ),
                 order_side,
                 order_type,
-                rng.gen_range(quantity_range.0..quantity_range.1) as i32,
+                qty_sample.sample(&mut rng) as i32,
                 chrono::Utc::now().timestamp() as u32,
                 Some(rounded_price),
             );
@@ -201,7 +211,7 @@ mod tests {
 
     #[test]
     // TODO: improve this test
-    fn test_get_oid_map(){
+    fn test_get_oid_map() {
         let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
         let orders = gen_orders(
             200,
@@ -220,8 +230,8 @@ mod tests {
         assert_eq!(o_book.oid_map.len(), 200);
     }
 
-    #[test] 
-    fn test_queue_order(){
+    #[test]
+    fn test_queue_order() {
         let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
         let orders = gen_orders(
             200,
@@ -326,8 +336,8 @@ mod tests {
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
             100,
-            Some(91.0),
-            Some(-0.5),
+            Some(88.0),
+            Some(0.5),
         );
 
         o_book.print_orderbook();
@@ -335,7 +345,6 @@ mod tests {
         for bid in limit_bids {
             o_book.queue_order(bid);
         }
-
 
         // check order map and price levels
         assert_eq!(o_book.oid_map.len(), 7);
@@ -347,13 +356,13 @@ mod tests {
             Err(e) => println!("Error executing orders: {}", e),
         }
 
+        o_book.print_orderbook();
 
         // check order map and price levels
         assert_eq!(o_book.oid_map.len(), 0);
         assert_eq!(o_book.bid_price_levels.len(), 0);
         assert_eq!(o_book.ask_price_levels.len(), 0);
 
-        o_book.print_orderbook();
 
         // 2. limit bids in order book -> add limit ask -> match
         println!("2. limit bids in order book -> add limit ask -> match");
@@ -615,7 +624,7 @@ mod tests {
             None,
         );
 
-        for bid in market_bids1 {
+        for bid in market_bids1.clone() {
             o_book.queue_order(bid);
         }
 
@@ -644,7 +653,7 @@ mod tests {
             Some(0.5),
         );
 
-        for ask in limit_asks2 {
+        for ask in limit_asks2.clone() {
             o_book.queue_order(ask);
         }
 
@@ -659,10 +668,24 @@ mod tests {
 
         // check order queue, order map and price_levels
         assert_eq!(o_book.order_queue.len(), 0);
-        assert_eq!(o_book.oid_map.len(), 0);
-        assert_eq!(o_book.bid_price_levels.len(), 0);
-        assert_eq!(o_book.ask_price_levels.len(), 0);
+        assert_eq!(o_book.oid_map.len(), 12);
+        assert_eq!(o_book.bid_price_levels.len(), 1);
+        assert_eq!(o_book.ask_price_levels.len(), 6);
         assert_eq!(o_book.last_market_price, Some(69.0));
+
+        for order in limit_asks2.clone() {
+            match o_book.delete_order(order.order_id) {
+                Ok(_) => (),
+                Err(e) => println!("Error deleting order: {}", e),
+            }
+        }
+
+        for order in market_bids1.clone() {
+            match o_book.delete_order(order.order_id) {
+                Ok(_) => (),
+                Err(e) => println!("Error deleting order: {}", e),
+            }
+        }
 
         // 7. market asks in order book -> add market bid -> match
         println!("7. market asks in order book -> add market bid -> match");
@@ -767,7 +790,7 @@ mod tests {
             None,
             None,
         );
-        
+
         for ask in market_asks4 {
             o_book.queue_order(ask);
         }
@@ -789,6 +812,144 @@ mod tests {
         assert_eq!(o_book.last_market_price, Some(21.0));
 
         // 9. ??? random order types -> match
-        // 10. ??? random order types -> no match
+        println!("9. ??? random order types -> match");
+
+        o_book.last_market_price = Some(60.0);
+
+        // generate orders from price range 60.0 to 65.0 in ranges in 0.5 increments.
+        // 100 orders total, and ensure the quantity at each price level decreases
+
+        let stock_id: Uuid = uuid::Uuid::new_v4();
+        let mut bids: Vec<Order> = Vec::new();
+
+        for j in 0..10 {
+            for i in 0..20 {
+                let price: f32 = 65.0;
+                // Round to 2 decimal places
+                let rounded_price = (price * 100.0).round() / 100.0;
+                let order = Order::new(
+                    Uuid::new_v4(),
+                    1,
+                    Stock::new(
+                        stock_id,
+                        "Stock 1".to_string(),
+                        "STK 1".to_string(),
+                        None,
+                        None,
+                        None,
+                    ),
+                    engine::orderbook::OrderSide::BID,
+                    engine::orderbook::OrderType::LIMIT,
+                    (10 - j) as i32,
+                    chrono::Utc::now().timestamp() as u32,
+                    Some(rounded_price - (j as f32 * 0.5)),
+                );
+                bids.push(order);
+            }
+        }
+
+        for order in bids {
+            o_book.queue_order(order);
+        }
+
+        // execute orders
+        match o_book.execute_all_orders() {
+            Ok(_) => (),
+            Err(e) => println!("Error executing orders: {}", e),
+        }
+
+        // print orderbook
+        o_book.print_orderbook();
+
+        // check order queue, order map and price_levels
+        assert_eq!(o_book.order_queue.len(), 0);
+        assert_eq!(o_book.oid_map.len(), 200);
+        assert_eq!(o_book.bid_price_levels.len(), 10);
+        assert_eq!(o_book.ask_price_levels.len(), 0);
+        assert_eq!(o_book.last_market_price, Some(60.0));
+
+        let mut asks = Vec::new();
+
+        for j in 0..10 {
+            for _ in 0..20 {
+                let price: f32 = 66.0;
+                // Round to 2 decimal places
+                let rounded_price = (price * 100.0).round() / 100.0;
+                let order = Order::new(
+                    Uuid::new_v4(),
+                    1,
+                    Stock::new(
+                        stock_id,
+                        "Stock 1".to_string(),
+                        "STK 1".to_string(),
+                        None,
+                        None,
+                        None,
+                    ),
+                    engine::orderbook::OrderSide::ASK,
+                    engine::orderbook::OrderType::LIMIT,
+                    (10 - j) as i32,
+                    chrono::Utc::now().timestamp() as u32,
+                    Some(rounded_price + (j as f32 * 0.5)),
+                );
+                asks.push(order);
+            }
+        }
+
+        for order in asks {
+            o_book.queue_order(order);
+        }
+
+        // execute orders
+        match o_book.execute_all_orders() {
+            Ok(_) => (),
+            Err(e) => println!("Error executing orders: {}", e),
+        }
+
+        // print orderbook
+        o_book.print_orderbook();
+
+        // create a new order with price of 65.0 and qty of 10
+        // for stock with ticker STK 1
+        let order0 = Order::new(
+            Uuid::new_v4(),
+            1,
+            Stock::new(
+                stock_id,
+                "Stock 1".to_string(),
+                "STK 1".to_string(),
+                None,
+                None,
+                None,
+            ),
+            engine::orderbook::OrderSide::BID,
+            engine::orderbook::OrderType::LIMIT,
+            10,
+            chrono::Utc::now().timestamp() as u32,
+            Some(66.0),
+        );
+        // queue the order
+        o_book.queue_order(order0.clone());
+        // execute the order
+        match o_book.execute_all_orders() {
+            Ok(_) => (),
+            Err(e) => println!("Error executing orders: {}", e),
+        }
+
+        // print orderbook
+        o_book.print_orderbook();
+
+        // check the order map and the price levels
+        assert_eq!(o_book.oid_map.len(), 399);
+        assert_eq!(o_book.bid_price_levels.len(), 10);
+        // check that the top bid price level qty is 190
+        let p_level = match o_book.get_price_level(OrderSide::ASK, 66.0) {
+            Some(p) => p.clone(),
+            None => panic!("Error getting price level"),
+        };
+        assert_eq!(p_level.qty, 190);
+        assert_eq!(o_book.ask_price_levels.len(), 10);
+        assert_eq!(o_book.last_market_price, Some(66.0));
+
     }
 }
