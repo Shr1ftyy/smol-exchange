@@ -6,9 +6,10 @@ a smol exchange
 - [x] Redis
 - [x] Docker
 - [x] Orderbook
-- [ ] Matching Engine
-- [ ] Tests
-- [ ] CI/CD
+- [x] Matching Engine
+- [ ] Data caching and backup
+- [x] Tests
+- [x] CI/CD
 - [ ] API
     - [ ] Websocket
     - [ ] REST API
