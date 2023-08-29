@@ -1,6 +1,6 @@
 # smol exchange
 a smol exchange
-![diagram](assets/diagram.png)
+![diagram](assets/exchange-diagram.png)
 
 ## TODO
 - [x] Redis
