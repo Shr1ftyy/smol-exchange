@@ -11,7 +11,7 @@ mod tests {
     use uuid::Uuid;
 
     const SEED: u64 = 69420;
-    fn generate_orders() -> Vec<Order> {
+    fn generate_orders(stock: Stock) -> Vec<Order> {
         let mut rng = ChaCha8Rng::seed_from_u64(SEED);
         let mut orders: Vec<Order> = Vec::new();
         // Bid Orders
@@ -21,15 +21,8 @@ mod tests {
             let rounded_price = (price * 100.0).round() / 100.0;
             let order = Order::new(
                 Uuid::new_v4(),
-                1,
-                Stock::new(
-                    uuid::Uuid::new_v4(),
-                    format!("Stock {}", i),
-                    format!("STK{}", i),
-                    Some(rng.gen_range(1e6..1e7) as i32),
-                    Some(rng.gen_range(1e6..1e7) as i32),
-                    Some(chrono::Utc::now().timestamp() as u32),
-                ),
+                Uuid::new_v4(),
+                stock.clone(),
                 engine::orderbook::OrderSide::BID,
                 match rng.gen_range(0..2) {
                     0 => engine::orderbook::OrderType::LIMIT,
@@ -49,15 +42,8 @@ mod tests {
             let rounded_price = (price * 100.0).round() / 100.0;
             let order = Order::new(
                 Uuid::new_v4(),
-                1,
-                Stock::new(
-                    uuid::Uuid::new_v4(),
-                    format!("Stock {}", i), // TODO: names, tickers should be consistent with orderbook ticker
-                    format!("STK{}", i),
-                    Some(rng.gen_range(1e6..1e7) as i32),
-                    Some(rng.gen_range(1e6..1e7) as i32),
-                    Some(chrono::Utc::now().timestamp() as u32),
-                ),
+                Uuid::new_v4(),
+                stock.clone(),
                 engine::orderbook::OrderSide::ASK,
                 match rng.gen_range(0..2) {
                     0 => engine::orderbook::OrderType::LIMIT,
@@ -75,6 +61,7 @@ mod tests {
     // a function for generating orders in a triangular distribution using rand_distr,
     // lets the user specify what type of orders to generate, the amount, price range, etc.
     fn generate_triangular_orders(
+        stock: Stock,
         num_orders: usize,
         order_type: engine::orderbook::OrderType,
         order_side: engine::orderbook::OrderSide,
@@ -104,15 +91,8 @@ mod tests {
             let rounded_price = (price * 100.0).round() / 100.0;
             let order = Order::new(
                 Uuid::new_v4(),
-                1,
-                Stock::new(
-                    uuid::Uuid::new_v4(),
-                    format!("Stock {}", i), // TODO: names, tickers should be consistent with orderbook ticker
-                    format!("STK{}", i),
-                    Some(rng.gen_range(1e6..1e7) as i32),
-                    Some(rng.gen_range(1e6..1e7) as i32),
-                    Some(chrono::Utc::now().timestamp() as u32),
-                ),
+                Uuid::new_v4(),
+                stock.clone(),
                 order_side,
                 order_type,
                 qty_sample.sample(&mut rng) as i32,
@@ -125,6 +105,7 @@ mod tests {
     }
 
     fn gen_orders(
+        stock: Stock,
         num_orders: usize,
         order_side: engine::orderbook::OrderSide,
         order_type: engine::orderbook::OrderType,
@@ -137,15 +118,8 @@ mod tests {
         for i in 0..num_orders {
             let order = Order::new(
                 Uuid::new_v4(),
-                1,
-                Stock::new(
-                    uuid::Uuid::new_v4(),
-                    format!("Stock {}", i),
-                    format!("STK{}", i),
-                    None,
-                    None,
-                    None,
-                ),
+                Uuid::new_v4(),
+                stock.clone(),
                 order_side,
                 order_type,
                 order_qty,
@@ -163,8 +137,18 @@ mod tests {
 
     #[test]
     fn test_adding_orders_pricelevel() {
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        );
         let mut p_level = PriceLevel::new(1.0, 0);
         let orders = gen_orders(
+            stock,
             10,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
@@ -182,9 +166,19 @@ mod tests {
 
     #[test]
     fn test_removing_orders_pricelevel() {
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        );
         let mut p_level = PriceLevel::new(1.0, 0);
 
         let orders = gen_orders(
+            stock,
             10,
             OrderSide::BID,
             OrderType::LIMIT,
@@ -212,8 +206,18 @@ mod tests {
     #[test]
     // TODO: improve this test
     fn test_get_oid_map() {
-        let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        );
+        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
         let orders = gen_orders(
+            stock.clone(),
             200,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
@@ -232,8 +236,19 @@ mod tests {
 
     #[test]
     fn test_queue_order() {
-        let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        ); 
+
+        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
         let orders = gen_orders(
+            stock.clone(),
             200,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
@@ -252,8 +267,19 @@ mod tests {
 
     #[test]
     fn test_adding_orders() {
-        let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        ); 
+
+        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
         let orders = gen_orders(
+            stock.clone(),
             200,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
@@ -272,8 +298,19 @@ mod tests {
 
     #[test]
     fn test_get_price_level_orderbook() {
-        let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        ); 
+
+        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
         let orders = gen_orders(
+            stock.clone(),
             200,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
@@ -307,13 +344,24 @@ mod tests {
 
     #[test]
     fn test_matching_orders() {
-        let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        ); 
+
+        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
 
         // scenarios to test:
         // 1. limit asks in order book -> add limit bid -> match
         println!("1. limit asks in order book -> add limit bid -> match");
 
         let limit_asks = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::ASK,
             engine::orderbook::OrderType::LIMIT,
@@ -332,6 +380,7 @@ mod tests {
         }
 
         let limit_bids = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
@@ -368,6 +417,7 @@ mod tests {
         println!("2. limit bids in order book -> add limit ask -> match");
 
         let limit_bids1 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
@@ -397,6 +447,7 @@ mod tests {
         assert_eq!(o_book.last_market_price, Some(91.0));
 
         let limit_asks1 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::ASK,
             engine::orderbook::OrderType::LIMIT,
@@ -429,6 +480,7 @@ mod tests {
         println!("3. limit asks in order book -> add market bid -> match");
 
         let limit_asks2 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::ASK,
             engine::orderbook::OrderType::LIMIT,
@@ -458,6 +510,7 @@ mod tests {
         assert_eq!(o_book.last_market_price, Some(88.0));
 
         let market_bids1 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::MARKET,
@@ -490,6 +543,7 @@ mod tests {
         println!("4. limit bids in order book -> add market ask -> match");
 
         let limit_bids2 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
@@ -519,6 +573,7 @@ mod tests {
         assert_eq!(o_book.last_market_price, Some(91.0));
 
         let market_asks1 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::ASK,
             engine::orderbook::OrderType::MARKET,
@@ -553,6 +608,7 @@ mod tests {
         o_book.last_market_price = Some(69.0);
 
         let market_asks2 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::ASK,
             engine::orderbook::OrderType::MARKET,
@@ -582,6 +638,7 @@ mod tests {
         assert_eq!(o_book.last_market_price, Some(69.0));
 
         let limit_bids3 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
@@ -616,6 +673,7 @@ mod tests {
         o_book.last_market_price = Some(69.0);
 
         let market_bids1 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::MARKET,
@@ -645,6 +703,7 @@ mod tests {
         assert_eq!(o_book.last_market_price, Some(69.0));
 
         let limit_asks2 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::ASK,
             engine::orderbook::OrderType::LIMIT,
@@ -693,6 +752,7 @@ mod tests {
         o_book.last_market_price = Some(420.0);
 
         let market_asks3 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::ASK,
             engine::orderbook::OrderType::MARKET,
@@ -721,6 +781,7 @@ mod tests {
         assert_eq!(o_book.last_market_price, Some(420.0));
 
         let market_bids2 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::MARKET,
@@ -755,6 +816,7 @@ mod tests {
         o_book.last_market_price = Some(21.0);
 
         let market_bids3 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::MARKET,
@@ -783,6 +845,7 @@ mod tests {
         assert_eq!(o_book.last_market_price, Some(21.0));
 
         let market_asks4 = gen_orders(
+            stock.clone(),
             7,
             engine::orderbook::OrderSide::ASK,
             engine::orderbook::OrderType::MARKET,
@@ -819,7 +882,7 @@ mod tests {
         // generate orders from price range 60.0 to 65.0 in ranges in 0.5 increments.
         // 100 orders total, and ensure the quantity at each price level decreases
 
-        let stock_id: Uuid = uuid::Uuid::new_v4();
+        let stock_id: Uuid = Uuid::new_v4();
         let mut bids: Vec<Order> = Vec::new();
 
         for j in 0..10 {
@@ -829,7 +892,7 @@ mod tests {
                 let rounded_price = (price * 100.0).round() / 100.0;
                 let order = Order::new(
                     Uuid::new_v4(),
-                    1,
+                    Uuid::new_v4(),
                     Stock::new(
                         stock_id,
                         "Stock 1".to_string(),
@@ -877,7 +940,7 @@ mod tests {
                 let rounded_price = (price * 100.0).round() / 100.0;
                 let order = Order::new(
                     Uuid::new_v4(),
-                    1,
+                    Uuid::new_v4(),
                     Stock::new(
                         stock_id,
                         "Stock 1".to_string(),
@@ -913,15 +976,8 @@ mod tests {
         // for stock with ticker STK 1
         let order0 = Order::new(
             Uuid::new_v4(),
-            1,
-            Stock::new(
-                stock_id,
-                "Stock 1".to_string(),
-                "STK 1".to_string(),
-                None,
-                None,
-                None,
-            ),
+            Uuid::new_v4(),
+            stock,
             engine::orderbook::OrderSide::BID,
             engine::orderbook::OrderType::LIMIT,
             10,

@@ -1,15 +1,22 @@
 mod engine;
 mod errors;
 mod helpers;
-use engine::engine::Matching;
-use engine::engine::MatchingEngine;
 use engine::orderbook::Order;
 use engine::orderbook::Stock;
 use uuid::Uuid;
 use rand::Rng;
 
 fn main() {
-    let mut o_book = engine::orderbook::OrderBook::new(uuid::Uuid::new_v4());
+    // create new stock
+    let stock = Stock::new(
+        Uuid::new_v4(),
+        String::from("Apple"),
+        String::from("AAPL"),
+        Some(1e6 as i32),
+        Some(1e6 as i32),
+        Some(chrono::Utc::now().timestamp() as u32),
+    );
+    let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
     let mut orders: Vec<Order> = Vec::new();
     for i in 0..100 {
         let price: f32 = rand::thread_rng().gen_range(90.0..100.0);
@@ -17,15 +24,8 @@ fn main() {
         let rounded_price = (price * 100.0).round() / 100.0;
         let order = Order::new(
             Uuid::new_v4(),
-            1,
-            Stock::new(
-                uuid::Uuid::new_v4(),
-                format!("Stock {}", i),
-                format!("STK{}", i),
-                Some(rand::thread_rng().gen_range(1e6..1e7) as i32),
-                Some(rand::thread_rng().gen_range(1e6..1e7) as i32),
-                Some(chrono::Utc::now().timestamp() as u32),
-            ),
+            Uuid::new_v4(),
+            stock.clone(),
             match rand::thread_rng().gen_range(0..2) {
                 0 => engine::orderbook::OrderSide::BID,
                 _ => engine::orderbook::OrderSide::ASK,
