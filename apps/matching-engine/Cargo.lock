@@ -366,23 +366,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b06a4cde4c0f271a446782e3eff8de789548ce57dbc8eca9292c27f4a42004b4"
 
 [[package]]
-name = "matching-engine"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "dotenv",
- "prettytable",
- "rand",
- "rand_chacha",
- "rand_distr",
- "redis",
- "serde",
- "serde_json",
- "tabular",
- "uuid",
-]
-
-[[package]]
 name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -637,6 +620,23 @@ name = "sha1_smol"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae1a47186c03a32177042e55dbc5fd5aee900b8e0069a8d70fba96a9375cd012"
+
+[[package]]
+name = "smolexchange"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dotenv",
+ "prettytable",
+ "rand",
+ "rand_chacha",
+ "rand_distr",
+ "redis",
+ "serde",
+ "serde_json",
+ "tabular",
+ "uuid",
+]
 
 [[package]]
 name = "socket2"
