@@ -1,16 +1,17 @@
-// mod engine;
-// mod errors;
-// mod helpers;
-// import engine, error and helpers modules from ./src folder
+// TODO: Add helper functions for the tests, a lot of the code patterns I'm seeing
+// are repeated in the tests, so it would be nice to have a helper function to make
+// everything more concise and readable
 #[cfg(test)]
 mod tests {
-    use smolexchange::engine;
-    use smolexchange::engine::*;
-    use smolexchange::engine::engine::User;
-    use smolexchange::orderbook::*;
+    use futures_util::StreamExt as _;
     use rand::prelude::*;
     use rand_chacha::ChaCha8Rng;
     use rand_distr::{Distribution, Triangular, TriangularError};
+    use redis::PubSubCommands;
+    use smolexchange::engine::engine::MatchingEngine;
+    use smolexchange::engine::orderbook::*;
+    use smolexchange::engine::*;
+    use tokio;
     use uuid::Uuid;
 
     const SEED: u64 = 69420;
@@ -26,10 +27,10 @@ mod tests {
                 Uuid::new_v4(),
                 Uuid::new_v4(),
                 stock.clone(),
-                engine::orderbook::OrderSide::BID,
+                orderbook::OrderSide::BID,
                 match rng.gen_range(0..2) {
-                    0 => engine::orderbook::OrderType::LIMIT,
-                    _ => engine::orderbook::OrderType::MARKET,
+                    0 => orderbook::OrderType::LIMIT,
+                    _ => orderbook::OrderType::MARKET,
                 },
                 rng.gen_range(10..100) as i32,
                 chrono::Utc::now().timestamp() as u32,
@@ -47,10 +48,10 @@ mod tests {
                 Uuid::new_v4(),
                 Uuid::new_v4(),
                 stock.clone(),
-                engine::orderbook::OrderSide::ASK,
+                orderbook::OrderSide::ASK,
                 match rng.gen_range(0..2) {
-                    0 => engine::orderbook::OrderType::LIMIT,
-                    _ => engine::orderbook::OrderType::MARKET,
+                    0 => orderbook::OrderType::LIMIT,
+                    _ => orderbook::OrderType::MARKET,
                 },
                 rng.gen_range(10..100) as i32,
                 chrono::Utc::now().timestamp() as u32,
@@ -66,8 +67,8 @@ mod tests {
     fn generate_triangular_orders(
         stock: Stock,
         num_orders: usize,
-        order_type: engine::orderbook::OrderType,
-        order_side: engine::orderbook::OrderSide,
+        order_type: orderbook::OrderType,
+        order_side: orderbook::OrderSide,
         price_range: (f32, f32),
         quantity_range: (i32, i32),
     ) -> Result<Vec<Order>, TriangularError> {
@@ -110,8 +111,8 @@ mod tests {
     fn gen_orders(
         stock: Stock,
         num_orders: usize,
-        order_side: engine::orderbook::OrderSide,
-        order_type: engine::orderbook::OrderType,
+        order_side: orderbook::OrderSide,
+        order_type: orderbook::OrderType,
         order_qty: i32,
         starting_price: Option<f32>,
         order_inc: Option<f32>,
@@ -153,8 +154,8 @@ mod tests {
         let orders = gen_orders(
             stock,
             10,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             100,
             Some(1.0),
             Some(0.0),
@@ -218,12 +219,12 @@ mod tests {
             Some(1e6 as i32),
             Some(chrono::Utc::now().timestamp() as u32),
         );
-        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
+        let mut o_book = orderbook::OrderBook::new(stock.clone());
         let orders = gen_orders(
             stock.clone(),
             200,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             100,
             Some(1.0),
             Some(0.0),
@@ -247,14 +248,14 @@ mod tests {
             Some(1e6 as i32),
             Some(1e6 as i32),
             Some(chrono::Utc::now().timestamp() as u32),
-        ); 
+        );
 
-        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
+        let mut o_book = orderbook::OrderBook::new(stock.clone());
         let orders = gen_orders(
             stock.clone(),
             200,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             100,
             Some(1.0),
             Some(0.0),
@@ -278,14 +279,14 @@ mod tests {
             Some(1e6 as i32),
             Some(1e6 as i32),
             Some(chrono::Utc::now().timestamp() as u32),
-        ); 
+        );
 
-        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
+        let mut o_book = orderbook::OrderBook::new(stock.clone());
         let orders = gen_orders(
             stock.clone(),
             200,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             100,
             Some(1.0),
             Some(0.0),
@@ -309,14 +310,14 @@ mod tests {
             Some(1e6 as i32),
             Some(1e6 as i32),
             Some(chrono::Utc::now().timestamp() as u32),
-        ); 
+        );
 
-        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
+        let mut o_book = orderbook::OrderBook::new(stock.clone());
         let orders = gen_orders(
             stock.clone(),
             200,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             100,
             Some(1.0),
             Some(0.0),
@@ -355,9 +356,9 @@ mod tests {
             Some(1e6 as i32),
             Some(1e6 as i32),
             Some(chrono::Utc::now().timestamp() as u32),
-        ); 
+        );
 
-        let mut o_book = engine::orderbook::OrderBook::new(stock.clone());
+        let mut o_book = orderbook::OrderBook::new(stock.clone());
 
         // scenarios to test:
         // 1. limit asks in order book -> add limit bid -> match
@@ -366,8 +367,8 @@ mod tests {
         let limit_asks = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::ASK,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::LIMIT,
             100,
             Some(88.0),
             Some(0.5),
@@ -382,17 +383,17 @@ mod tests {
             Err(e) => println!("Error executing orders: {}", e),
         }
 
+        o_book.print_orderbook();
+
         let limit_bids = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             100,
             Some(88.0),
             Some(0.5),
         );
-
-        o_book.print_orderbook();
 
         for bid in limit_bids {
             o_book.queue_order(bid);
@@ -415,15 +416,14 @@ mod tests {
         assert_eq!(o_book.bid_price_levels.len(), 0);
         assert_eq!(o_book.ask_price_levels.len(), 0);
 
-
         // 2. limit bids in order book -> add limit ask -> match
         println!("2. limit bids in order book -> add limit ask -> match");
 
         let limit_bids1 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             100,
             Some(88.0),
             Some(0.5),
@@ -452,8 +452,8 @@ mod tests {
         let limit_asks1 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::ASK,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::LIMIT,
             100,
             Some(91.0),
             Some(-0.5),
@@ -485,8 +485,8 @@ mod tests {
         let limit_asks2 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::ASK,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::LIMIT,
             100,
             Some(88.0),
             Some(0.5),
@@ -515,8 +515,8 @@ mod tests {
         let market_bids1 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::MARKET,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::MARKET,
             100,
             None,
             None,
@@ -548,8 +548,8 @@ mod tests {
         let limit_bids2 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             100,
             Some(91.0),
             Some(-0.5),
@@ -578,8 +578,8 @@ mod tests {
         let market_asks1 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::ASK,
-            engine::orderbook::OrderType::MARKET,
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::MARKET,
             100,
             None,
             None,
@@ -613,8 +613,8 @@ mod tests {
         let market_asks2 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::ASK,
-            engine::orderbook::OrderType::MARKET,
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::MARKET,
             100,
             None,
             None,
@@ -643,8 +643,8 @@ mod tests {
         let limit_bids3 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             100,
             Some(88.0),
             Some(0.5),
@@ -678,8 +678,8 @@ mod tests {
         let market_bids1 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::MARKET,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::MARKET,
             100,
             None,
             None,
@@ -708,8 +708,8 @@ mod tests {
         let limit_asks2 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::ASK,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::LIMIT,
             100,
             Some(69.0),
             Some(0.5),
@@ -757,8 +757,8 @@ mod tests {
         let market_asks3 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::ASK,
-            engine::orderbook::OrderType::MARKET,
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::MARKET,
             100,
             None,
             None,
@@ -786,8 +786,8 @@ mod tests {
         let market_bids2 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::MARKET,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::MARKET,
             100,
             None,
             None,
@@ -821,8 +821,8 @@ mod tests {
         let market_bids3 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::MARKET,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::MARKET,
             100,
             None,
             None,
@@ -850,8 +850,8 @@ mod tests {
         let market_asks4 = gen_orders(
             stock.clone(),
             7,
-            engine::orderbook::OrderSide::ASK,
-            engine::orderbook::OrderType::MARKET,
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::MARKET,
             100,
             None,
             None,
@@ -904,8 +904,8 @@ mod tests {
                         None,
                         None,
                     ),
-                    engine::orderbook::OrderSide::BID,
-                    engine::orderbook::OrderType::LIMIT,
+                    orderbook::OrderSide::BID,
+                    orderbook::OrderType::LIMIT,
                     (10 - j) as i32,
                     chrono::Utc::now().timestamp() as u32,
                     Some(rounded_price - (j as f32 * 0.5)),
@@ -952,8 +952,8 @@ mod tests {
                         None,
                         None,
                     ),
-                    engine::orderbook::OrderSide::ASK,
-                    engine::orderbook::OrderType::LIMIT,
+                    orderbook::OrderSide::ASK,
+                    orderbook::OrderType::LIMIT,
                     (10 - j) as i32,
                     chrono::Utc::now().timestamp() as u32,
                     Some(rounded_price + (j as f32 * 0.5)),
@@ -981,8 +981,8 @@ mod tests {
             Uuid::new_v4(),
             Uuid::new_v4(),
             stock,
-            engine::orderbook::OrderSide::BID,
-            engine::orderbook::OrderType::LIMIT,
+            orderbook::OrderSide::BID,
+            orderbook::OrderType::LIMIT,
             10,
             chrono::Utc::now().timestamp() as u32,
             Some(66.0),
@@ -1009,11 +1009,15 @@ mod tests {
         assert_eq!(p_level.qty, 190);
         assert_eq!(o_book.ask_price_levels.len(), 10);
         assert_eq!(o_book.last_market_price, Some(66.0));
-
     }
 
-    fn test_exchange() {
-        let exchange = Exchange::new();
+    // test adding a stock to the exchange
+    #[test]
+    fn test_exchange_add_stock() {
+        // create new exchange
+        let mut exchange = Exchange::new();
+
+        // create new stock
         let stock = Stock::new(
             Uuid::new_v4(),
             String::from("Apple"),
@@ -1023,18 +1027,286 @@ mod tests {
             Some(chrono::Utc::now().timestamp() as u32),
         );
 
-        // create user
-        let user = User::new(
+        // create new user
+        let issuer = User::new(
             Uuid::new_v4(),
             String::from("John"),
-            String::from("Doe"),
             String::from("john.doe@gmail.com"),
-            1e6 as f32,
+            String::from("password"),
+            Some(1e6 as f32),
         );
 
-        
+        // add stock to exchange
+        exchange.add_stock(stock, issuer);
 
+        // test number of stocks in exchange
+        assert_eq!(exchange.stocks.len(), 1);
+
+        // test to check users and userstocks
+        assert_eq!(exchange.users.len(), 1);
+        assert_eq!(exchange.user_stocks.len(), 1);
+    }
+
+    // test executing order in exchange
+    #[test]
+    fn test_exchange_execute_order() {
+        // create new exchange
+        let mut exchange = Exchange::new();
+
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        );
+
+        // create new user
+        let issuer = User::new(
+            Uuid::new_v4(),
+            String::from("John"),
+            String::from("john.doe@gmail.com"),
+            String::from("password"),
+            Some(1e6 as f32),
+        );
+
+        // add stock to exchange
+        exchange.add_stock(stock.clone(), issuer);
+
+        // create new order
+        let order = Order::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            stock.clone(),
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::LIMIT,
+            100,
+            chrono::Utc::now().timestamp() as u32,
+            Some(69.0),
+        );
+
+        // execute order, and check execution type (should be add)
+        let res: Execution = match exchange.execute_order(order) {
+            Ok(r) => r,
+            Err(e) => panic!("Error executing order: {}", e),
+        };
+        // check execution type
+        assert_eq!(res.exec_type, orderbook::ExecutionType::ADD);
+        println!("{}", res);
+
+        // test number of orders in exchange
+        let o_book = match exchange.orderbooks.get(&stock.clone().stock_id.to_string()) {
+            Some(o) => o.clone(),
+            None => panic!("Error getting orderbook"),
+        };
+
+        // test number of orders in orderbook
+        assert_eq!(o_book.oid_map.len(), 1);
+    }
+
+    // test executing all orders in exchange
+    #[test]
+    fn test_exchange_execute_all_orders() {
+        // create new exchange
+        let mut exchange = Exchange::new();
+
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        );
+
+        // create new user
+        let issuer = User::new(
+            Uuid::new_v4(),
+            String::from("John"),
+            String::from("john.doe@gmail.com"),
+            String::from("password"),
+            Some(1e6 as f32),
+        );
+
+        // add stock to exchange
+        exchange.add_stock(stock.clone(), issuer);
+
+        // create new orders
+        let orders = gen_orders(
+            stock.clone(),
+            200,
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::LIMIT,
+            100,
+            Some(69.0),
+            Some(0.0),
+        );
+
+        // get orderbook
+        let mut o_book = match exchange.orderbooks.get(&stock.clone().stock_id.to_string()) {
+            Some(o) => o.clone(),
+            None => panic!("Error getting orderbook"),
+        };
+
+        // queue orders to order book
+        for order in orders {
+            o_book.queue_order(order);
         }
 
+        // insert o_book to exchange
+        exchange
+            .orderbooks
+            .insert(stock.clone().stock_id.to_string(), o_book);
+
+        // check order queue length
+        let order_book = match exchange.orderbooks.get(&stock.clone().stock_id.to_string()) {
+            Some(o) => o.clone(),
+            None => panic!("Error getting orderbook"),
+        };
+
+        assert_eq!(order_book.order_queue.len(), 200);
+
+        // execute all orders
+        match exchange.execute_all_orders() {
+            Ok(_) => (),
+            Err(e) => println!("{}", e),
+        };
+
+        let book = match exchange.orderbooks.get(&stock.clone().stock_id.to_string()) {
+            Some(o) => o.clone(),
+            None => panic!("Error getting orderbook"),
+        };
+
+        book.print_orderbook();
+
+        // check order queue length
+        assert_eq!(book.order_queue.len(), 0);
+    }
+
+    // test adding a stock to MatchingEngine
+    #[test]
+    fn test_matching_engine_add_stock() {
+        // create new matching engine
+        let mut me = MatchingEngine::new("redis://127.0.0.1:6379");
+
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        );
+
+        // create new user
+        let issuer = User::new(
+            Uuid::new_v4(),
+            String::from("John"),
+            String::from("john.doe@gmail.com"),
+            String::from("password"),
+            Some(1e6 as f32),
+        );
+
+        // add stock to matching engine
+        me.add_stock(stock.clone(), issuer);
+
+        // test number of stocks in matching engine
+        let o_book: OrderBook = match me
+            .exchange
+            .orderbooks
+            .get(&stock.clone().stock_id.to_string())
+        {
+            Some(o) => o.clone(),
+            None => panic!("Error getting orderbook"),
+        };
+        assert_eq!(o_book.stock_id, stock.stock_id);
+        assert_eq!(o_book.stock_info.ticker, stock.ticker);
+        assert_eq!(o_book.stock_info.name, stock.name);
+
+        // test to check users and userstocks
+        assert_eq!(me.exchange.users.len(), 1);
+        assert_eq!(me.exchange.user_stocks.len(), 1);
+    }
+
+    // test executing orders in MatchingEngine
+    #[tokio::test]
+    async fn test_matching_engine_execute_order() {
+        // create new matching engine
+        let mut me: MatchingEngine = MatchingEngine::new("redis://127.0.0.1:6379");
+        // new redis client with same address
+        let client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+
+        // create new stock
+        let stock = Stock::new(
+            Uuid::new_v4(),
+            String::from("Apple"),
+            String::from("AAPL"),
+            Some(1e6 as i32),
+            Some(1e6 as i32),
+            Some(chrono::Utc::now().timestamp() as u32),
+        );
+
+        // establish pub sub connection to matching engine
+        let mut publish_conn = match client.get_async_connection().await {
+            Ok(c) => c,
+            Err(e) => panic!("Error getting connection: {}", e),
+        };
+
+        let mut pubsub_conn = client.get_async_connection().await.unwrap().into_pubsub();
+
+        pubsub_conn
+            .subscribe(format!("stock:{}", stock.clone().ticker))
+            .await
+            .unwrap();
+        let mut pubsub_stream = pubsub_conn.on_message();
+
+        // create new user
+        let issuer = User::new(
+            Uuid::new_v4(),
+            String::from("John"),
+            String::from("john.doe@gmail.com"),
+            String::from("password"),
+            Some(1e6 as f32),
+        );
+
+        // add stock to matching engine
+        match me.add_stock(stock.clone(), issuer) {
+            Ok(_) => (),
+            Err(e) => panic!("Error adding stock: {}", e),
+        };
+
+        // create new order
+        let order = Order::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            stock.clone(),
+            orderbook::OrderSide::ASK,
+            orderbook::OrderType::LIMIT,
+            100,
+            chrono::Utc::now().timestamp() as u32,
+            Some(69.0),
+        );
+
+        // execute order (async), and check execution type (should be add)
+        me.execute_order(order.clone()).await.unwrap();
+
+        // get msg from channel
+        let msg: String = pubsub_stream.next().await.unwrap().get_payload().unwrap();
+
+        // print msg, and check that you received a msg
+        println!("Message: {:?}", msg);
+        assert!(msg.len() > 0);
+        // decode json
+        let exec: Execution = match serde_json::from_str(&msg) {
+            Ok(r) => r,
+            Err(e) => panic!("Error decoding json: {}", e),
+        };
+
+        // check order
+        assert_eq!(exec.order, order.clone());
     }
 }

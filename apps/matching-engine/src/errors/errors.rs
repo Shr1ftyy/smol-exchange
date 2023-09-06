@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OrderError {
     InvalidOrderID,
     InvalidCreatorID,
@@ -37,6 +37,7 @@ pub enum StockError {
     InvalidTimeCreated,
     InvalidTotalIssued,
     InvalidOutstandingShares,
+    DuplicateStockID,
     Other(String), // Catch-all for unexpected errors, with a descriptive message.
 }
 
@@ -49,6 +50,7 @@ impl fmt::Display for StockError {
             StockError::InvalidTimeCreated => write!(f, "InvalidTimeCreated"),
             StockError::InvalidTotalIssued => write!(f, "InvalidTotalIssued"),
             StockError::InvalidOutstandingShares => write!(f, "InvalidOutstandingShares"),
+            StockError::DuplicateStockID => write!(f, "DuplicateStockID"),
             StockError::Other(e) => write!(f, "Other: {}", e),
         }
     }

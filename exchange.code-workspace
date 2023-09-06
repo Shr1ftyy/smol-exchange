@@ -4,7 +4,10 @@
             "path": "apps/matching-engine"
         },
         {
-            "path": "." // root
+            "path": "."
+        },
+        {
+            "path": "apps/api"
         }
     ]
 }
