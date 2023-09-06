@@ -2,16 +2,16 @@ use core::fmt;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::primitive;
+use std::hash::Hash;
 // TODO: Is this ok?
 use crate::errors::OrderError;
 use crate::errors::StockError;
 use crate::helpers::helpers;
 use prettytable::{row, Table};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 extern crate redis;
-use redis::Commands;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OrderSide {
@@ -25,7 +25,48 @@ pub enum OrderType {
     LIMIT,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ExecutionType {
+    ADD,
+    MODIFY,
+    DELETE,
+    MATCH,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Execution {
+    pub exec_type: ExecutionType,
+    pub executor_id: uuid::Uuid,
+    pub time_executed: u32,
+    pub order: Order,
+    pub matched_order: Option<Order>,
+}
+
+impl fmt::Display for Execution {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let exec_type = match self.exec_type {
+            ExecutionType::ADD => "ADD",
+            ExecutionType::MODIFY => "MODIFY",
+            ExecutionType::DELETE => "DELETE",
+            ExecutionType::MATCH => "MATCH",
+        };
+        write!(
+            f,
+            "Execution: {} {} {} {} {} {} {} {} {}",
+            exec_type,
+            self.executor_id,
+            self.time_executed,
+            self.order.order_id,
+            self.order.creator_id,
+            self.order.stock.stock_id,
+            self.order.order_side,
+            self.order.order_type,
+            self.order.qty
+        )
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Stock {
     pub stock_id: uuid::Uuid,
     pub name: String,
@@ -35,10 +76,10 @@ pub struct Stock {
     pub time_created: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Order {
     pub order_id: uuid::Uuid,
-    pub creator_id: i32,
+    pub creator_id: uuid::Uuid,
     pub stock: Stock,
     pub order_side: OrderSide,
     pub order_type: OrderType,
@@ -47,24 +88,46 @@ pub struct Order {
     pub price: Option<f32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceLevel {
     pub price: f32,
     pub qty: i32,
     pub orders: VecDeque<uuid::Uuid>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderBook {
     pub stock_id: uuid::Uuid,
+    pub stock_info: Stock,
     pub bid_price_levels: BTreeMap<String, PriceLevel>,
     pub ask_price_levels: BTreeMap<String, PriceLevel>,
     pub oid_map: BTreeMap<uuid::Uuid, Order>,
     pub order_queue: VecDeque<Order>,
     pub last_market_price: Option<f32>,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+// struct for user
+pub struct User {
+    user_id: uuid::Uuid,
+    name: String,
+    email: String,
+    password: String,
+    balance: Option<f32>,
+}
 
+// struct for user-stocks
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UserStocks {
+    user_id: uuid::Uuid,
+    stock_id: uuid::Uuid,
+    quantity: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Exchange {
+    pub users: BTreeMap<uuid::Uuid, User>,
+    pub stocks: BTreeMap<uuid::Uuid, Stock>,
+    pub user_stocks: BTreeMap<uuid::Uuid, HashMap<uuid::Uuid, UserStocks>>,
     pub orderbooks: BTreeMap<String, OrderBook>,
 }
 
@@ -174,7 +237,7 @@ impl Order {
         if self.order_id.is_nil() {
             return Err(OrderError::InvalidOrderID);
         }
-        if self.creator_id <= 0 {
+        if self.creator_id <= uuid::Uuid::nil() {
             return Err(OrderError::InvalidCreatorID);
         }
         if self.stock.stock_id == uuid::Uuid::nil() {
@@ -203,7 +266,7 @@ impl Order {
 
     pub fn new(
         order_id: uuid::Uuid,
-        creator_id: i32,
+        creator_id: uuid::Uuid,
         stock: Stock,
         order_side: OrderSide,
         order_type: OrderType,
@@ -229,6 +292,27 @@ impl Order {
 
         // TODO: Is this how it is done?
         order
+    }
+}
+
+impl Execution {
+    // create new execution
+    pub fn new(
+        exec_type: ExecutionType,
+        executor_id: uuid::Uuid,
+        time_executed: u32,
+        order: Order,
+        matched_order: Option<Order>,
+    ) -> Self {
+        let execution: Execution = Execution {
+            exec_type,
+            executor_id,
+            time_executed,
+            order,
+            matched_order,
+        };
+
+        execution
     }
 }
 
@@ -258,13 +342,15 @@ impl PriceLevel {
 }
 
 impl OrderBook {
-    pub fn new(stock_id: uuid::Uuid) -> Self {
+    // create new orderbook given stock
+    pub fn new(stock: Stock) -> Self {
         let orderbook: OrderBook = OrderBook {
-            stock_id,
+            stock_id: stock.stock_id,
+            stock_info: stock,
             bid_price_levels: BTreeMap::new(),
             ask_price_levels: BTreeMap::new(),
-            order_queue: VecDeque::new(),
             oid_map: BTreeMap::new(),
+            order_queue: VecDeque::new(),
             last_market_price: None,
         };
 
@@ -291,8 +377,9 @@ impl OrderBook {
         &self.oid_map
     }
 
-    pub fn get_stock_id(&self) -> uuid::Uuid {
-        self.stock_id
+    pub fn get_stock(&self) -> Result<Stock, StockError> {
+        let stock = self.oid_map.values().next().unwrap().stock.clone();
+        Ok(stock)
     }
 
     pub fn queue_order(&mut self, order: Order) {
@@ -438,13 +525,14 @@ impl OrderBook {
     }
 
     // match order against orderbook given order id in orderbook
-    pub fn match_order(&mut self, mut order: Order) -> Result<(), OrderError> {
+    pub fn match_order(&mut self, mut order: Order) -> Result<Execution, OrderError> {
         let price_level_to_search = match order.order_side {
             OrderSide::BID => self.ask_price_levels.clone(),
             OrderSide::ASK => self.bid_price_levels.clone(),
         };
 
         let it = price_level_to_search.iter();
+        let order_to_match: Order = order.clone(); 
 
         match order.order_side {
             OrderSide::BID => {
@@ -476,12 +564,10 @@ impl OrderBook {
                             // delete order from orderbook
                             // modify order in orderbook
                             // return
-                            let trade_qty = order.qty;
+                            let trade_qty: i32 = order.qty;
                             order.qty -= trade_qty;
                             order_to_match.qty -= trade_qty;
-                            // instead of doing this, we create a new transaction, and eventually send it to the redis instance
-                            // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
-                            // self.tradebook.push_back(trade);
+
                             match self._modify_order(
                                 order_to_match.order_id,
                                 order_to_match.qty,
@@ -504,10 +590,9 @@ impl OrderBook {
                             let trade_qty = order_to_match.qty;
                             order.qty -= trade_qty;
                             order_to_match.qty -= trade_qty;
-                            // instead of doing this, we create a new transaction, and eventually send it to the redis instance
-                            // let trade = Trade::new(order.order_id, order.stock_id, order.price, trade_qty);
-                            // self.tradebook.push_back(trade);
+
                             match self._delete_order(order_to_match.order_id) {
+
                                 Ok(_) => {}
                                 Err(e) => return Err(e),
                             }
@@ -594,16 +679,28 @@ impl OrderBook {
         // add order to orderbook if it still has qty
         if order.qty > 0 {
             match self.add_order(order.clone()) {
-                Ok(_) => {}
+                Ok(_) => Ok(Execution::new(
+                    ExecutionType::ADD,
+                    order.creator_id,
+                    order.time_created,
+                    order,
+                    None,
+                )),
                 Err(e) => return Err(e),
             }
+        } else {
+            Ok(Execution::new(
+                ExecutionType::MATCH,
+                order.creator_id,
+                order.time_created,
+                order,
+                Some(order_to_match),
+            ))
         }
-
-        Ok(())
     }
 
     // executes order from queue (matches order)
-    pub fn execute_order(&mut self) -> Result<(), OrderError> {
+    pub fn execute_order(&mut self) -> Result<Execution, OrderError> {
         // get order from queue
         let order: Order = match self.order_queue.pop_front() {
             Some(order) => order,
@@ -612,19 +709,31 @@ impl OrderBook {
 
         // attempt to match order
         match self.match_order(order) {
-            Ok(_) => Ok(()),
+            Ok(exec) => Ok(exec),
             Err(e) => return Err(e),
         }
     }
 
-    // execute all orders in queue until empty
-    pub fn execute_all_orders(&mut self) -> Result<(), OrderError> {
+    // execute all orders in queue until empty, return a vector of executions in a result
+    pub fn execute_all_orders(&mut self) -> Result<Vec<Execution>, OrderError> {
+        let mut executions: Vec<Execution> = Vec::new();
+
         loop {
             match self.execute_order() {
-                Ok(_) => {}
-                Err(e) => return Err(e),
+                Ok(exec) => {
+                    executions.push(exec);
+                }
+                Err(e) => {
+                    if e == OrderError::OrderQueueEmpty {
+                        break;
+                    } else {
+                        return Err(e);
+                    }
+                }
             }
         }
+
+        Ok(executions)
     }
 
     // print orderbook, with asks and bids side by side in a table, along with quantities at each price level
@@ -655,5 +764,231 @@ impl OrderBook {
             }
         }
         table.printstd();
+    }
+}
+
+impl User {
+    // create new user
+    pub fn new(
+        user_id: uuid::Uuid,
+        name: String,
+        email: String,
+        password: String,
+        balance: Option<f32>,
+    ) -> Self {
+        let user: User = User {
+            user_id,
+            name,
+            email,
+            password,
+            balance,
+        };
+
+        user
+    }
+}
+
+impl UserStocks {
+    // create new user_stocks
+    pub fn new(user_id: uuid::Uuid, stock_id: uuid::Uuid, quantity: i32) -> Self {
+        let user_stocks: UserStocks = UserStocks {
+            user_id,
+            stock_id,
+            quantity,
+        };
+
+        user_stocks
+    }
+}
+
+impl Exchange {
+    // create new exchange
+    pub fn new() -> Self {
+        let exchange: Exchange = Exchange {
+            users: BTreeMap::new(),
+            stocks: BTreeMap::new(),
+            user_stocks: BTreeMap::new(),
+            orderbooks: BTreeMap::new(),
+        };
+
+        exchange
+    }
+
+    // add stock to exchange
+    pub fn add_stock(&mut self, stock: Stock, issuer: User) -> Result<(), StockError> {
+        // check for duplicates
+        match self.stocks.get(&stock.stock_id) {
+            Some(_) => return Err(StockError::DuplicateStockID),
+            None => {}
+        }
+
+        self.stocks.insert(stock.clone().stock_id, stock.clone());
+        self.orderbooks.insert(
+            stock.clone().stock_id.to_string(),
+            OrderBook::new(stock.clone()),
+        );
+        self.users.insert(issuer.clone().user_id, issuer.clone());
+
+        // add stock to user_stocks
+        match self.user_stocks.get_mut(&issuer.user_id) {
+            Some(_) => Ok(()),
+            None => {
+                self.user_stocks
+                    .insert(stock.clone().stock_id, HashMap::new());
+                let user_stocks_map: &mut HashMap<uuid::Uuid, UserStocks> =
+                    self.user_stocks.get_mut(&stock.clone().stock_id).unwrap();
+                let user_stock: UserStocks = UserStocks::new(
+                    issuer.user_id,
+                    stock.clone().stock_id,
+                    stock.clone().outstanding_shares.unwrap(),
+                );
+                user_stocks_map.insert(stock.clone().stock_id, user_stock);
+                Ok(())
+            }
+        }
+    }
+
+    // get stock from exchange
+    pub fn get_stock(&mut self, stock_id: uuid::Uuid) -> Result<Stock, StockError> {
+        match self.orderbooks.get_mut(&stock_id.to_string()) {
+            Some(orderbook) => {
+                // TODO: this might panic, fix later???
+                let stock = orderbook.get_stock().unwrap();
+                Ok(stock)
+            }
+            None => Err(StockError::InvalidStockID),
+        }
+    }
+
+    // queue an order and execute it and return the execution for each order
+    pub fn execute_order(&mut self, order: Order) -> Result<Execution, OrderError> {
+        let orderbook = match self.orderbooks.get_mut(&order.stock.stock_id.to_string()) {
+            Some(orderbook) => orderbook,
+            None => return Err(OrderError::InvalidStockID),
+        };
+
+        // queue order
+        orderbook.queue_order(order.clone());
+
+        // execute order
+        match orderbook.execute_order() {
+            Ok(exec) => Ok(exec),
+            Err(e) => Err(e),
+        }
+    }
+
+    // execute all orders (cleanup) and return a vector of executions
+    pub fn execute_all_orders(&mut self) -> Result<Vec<Execution>, OrderError> {
+        let mut executions: Vec<Execution> = Vec::new();
+
+        for (_, orderbook) in self.orderbooks.iter_mut() {
+            loop {
+                match orderbook.execute_order() {
+                    Ok(exec) => {
+                        executions.push(exec);
+                    }
+                    Err(e) => {
+                        if e == OrderError::OrderQueueEmpty {
+                            break;
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(executions)
+    }
+
+    // modify order
+    pub fn modify_order(
+        &mut self,
+        stock: Stock,
+        order_id: uuid::Uuid,
+        new_qty: i32,
+        new_price: Option<f32>,
+    ) -> Result<(), OrderError> {
+        // get stock id from oid map
+        let orderbook = match self.orderbooks.get_mut(&stock.stock_id.to_string()) {
+            Some(orderbook) => orderbook,
+            None => return Err(OrderError::InvalidStockID),
+        };
+
+        // modify order
+        match orderbook.modify_order(order_id, new_qty, new_price) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    // delete order
+    pub fn delete_order(&mut self, stock: Stock, order_id: uuid::Uuid) -> Result<(), OrderError> {
+        let orderbook = match self.orderbooks.get_mut(&stock.stock_id.to_string()) {
+            Some(orderbook) => orderbook,
+            None => return Err(OrderError::InvalidStockID),
+        };
+
+        // delete order
+        match orderbook.delete_order(order_id) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    // print orderbook
+    pub fn print_orderbook(&self, stock_id: uuid::Uuid) {
+        let orderbook = match self.orderbooks.get(&stock_id.to_string()) {
+            Some(orderbook) => orderbook,
+            None => return,
+        };
+
+        orderbook.print_orderbook();
+    }
+
+    // print stock
+    pub fn print_stock(&self, stock_id: uuid::Uuid) {
+        let orderbook = match self.orderbooks.get(&stock_id.to_string()) {
+            Some(orderbook) => orderbook,
+            None => return,
+        };
+
+        let stock = orderbook.get_stock().unwrap();
+
+        println!("Stock: {:?}", stock);
+    }
+
+    // print stocks
+    pub fn print_stocks(&self) {
+        for (_, orderbook) in self.orderbooks.iter() {
+            let stock = orderbook.get_stock().unwrap();
+            println!("Stock: {:?}", stock);
+        }
+    }
+
+    // return json of bid and ask price levels with quantities in serde json
+    pub fn get_orderbook_json(&self, stock_id: uuid::Uuid) -> String {
+        let orderbook = match self.orderbooks.get(&stock_id.to_string()) {
+            Some(orderbook) => orderbook,
+            None => return String::from(""),
+        };
+
+        let mut bid_price_levels: Vec<PriceLevel> = Vec::new();
+        let mut ask_price_levels: Vec<PriceLevel> = Vec::new();
+
+        for (_, price_level) in orderbook.bid_price_levels.iter() {
+            bid_price_levels.push(price_level.clone());
+        }
+
+        for (_, price_level) in orderbook.ask_price_levels.iter() {
+            ask_price_levels.push(price_level.clone());
+        }
+
+        let orderbook_json = json!({
+            "bid_price_levels": bid_price_levels,
+            "ask_price_levels": ask_price_levels,
+        });
+
+        orderbook_json.to_string()
     }
 }
