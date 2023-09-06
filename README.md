@@ -7,7 +7,7 @@ a smol exchange
 - [x] Docker
 - [x] Orderbook
 - [x] Matching Engine
-- [ ] Data caching and backup
+- [x] Redis PubSub for Transactions
 - [x] Tests
 - [x] CI/CD
 - [ ] API
